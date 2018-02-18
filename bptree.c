@@ -9,20 +9,20 @@
 #ifndef LOG
 #define LOG(_fmt_, ...) \
 	do {							\
-		printf("[BPT]%s(%d):", __FUNCTION__, __LINE__);	\
+		printf("[BPT]%s(%d):", __FUNCTION__, __LINE__); \
 		printf(_fmt_, ##__VA_ARGS__);			\
 	} while (0)
 #endif	/* LOG */
 
-/* Minimum page size 512 bytes and max page size 16K */
-#define MAX_BPT_PAGE_SHIFT	14
+/* Minimum page size 512 bytes and max page size 64K */
+#define MAX_BPT_PAGE_SHIFT	16
 #define MIN_BPT_PAGE_SHIFT	9
 
 #define PAGE_ALLOC	0
 #define PAGE_ROOT	1	// root is always located at page 1
 #define PAGE_LEAF	2	// The first leaf page of level zero is always located at page 2
 
-#define PAGE_NUM_BYTES	6
+#define PAGE_NUM_BYTES	6	// Maximum addressable space is 6-bytes integer*max-page-size
 
 /* Minimum level of a new b+tree */
 #define MIN_LEVEL	2
@@ -1047,6 +1047,8 @@ unsigned int bpt_nextkey(bpt_handle h, unsigned int slot)
 	return 0;
 }
 
+#ifdef _UNITTEST
+
 void dump_key(unsigned char *key, unsigned int len)
 {
 	unsigned int i;
@@ -1235,3 +1237,5 @@ int main(int argc, char *argv[])
 	}
 	return rc;
 }
+
+#endif	/* _UNITTEST */

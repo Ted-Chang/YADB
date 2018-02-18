@@ -2,12 +2,14 @@
 CFLAGS = -Wall -g
 CC = gcc
 
-all: yadb
+all: bptest bench
 
-yadb: bptree.o
+bptest:
+	$(CC) -D_UNITTEST bptree.c -o bptest
+
+bench: bench.o bptree.o
 	$(CC) $^ -o $@
-	rm *.o
 
 clean:
-	rm *.o yadb
+	rm *.o yadb bench
 
