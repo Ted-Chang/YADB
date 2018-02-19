@@ -19,6 +19,7 @@ struct bench_option {
 };
 
 static void usage();
+static void print_seperator();
 
 struct bench_option opts = {
 	12,
@@ -27,15 +28,32 @@ struct bench_option opts = {
 	0
 };
 
+static void dump_options(struct bench_option *options)
+{
+	printf("Page bits: %d\n", options->page_bits);
+	printf("Number of keys: %d\n", options->rounds);
+	printf("Operation: %s\n", options->read ? "read" : "write");
+	printf("IO pattern: %s\n", options->random ? "random" : "sequential");
+}
+
+static void dump_bpt_iostat(struct bpt_iostat *iostat)
+{
+	printf("BPT iostat:\n");
+	printf("reads  : %lld\n", iostat->reads);
+	printf("writes : %lld\n", iostat->writes);
+}
+
 int main(int argc, char *argv[])
 {
 	int rc = 0;
 	int ch = 0;
 	bpt_handle h = NULL;
-	int i;
+	struct bpt_iostat iostat;
+	int i, j, x;
 	struct timespec start, stop;
-	double time;
+	double t;
 	struct key_value *kv = NULL;
+	struct key_value temp;
 
 	while ((ch = getopt(argc, argv, "p:n:o:rh")) != -1) {
 		switch (ch) {
@@ -86,30 +104,44 @@ int main(int argc, char *argv[])
 		kv[i].value = i + 2;
 	}
 
+	if (opts.random) {
+		x = 0;
+		srand(time(NULL));
+		do {
+			i = rand() % opts.rounds;
+			j = rand() % opts.rounds;
+			temp = kv[i];
+			kv[i] = kv[j];
+			kv[j] = temp;
+			x++;
+		} while(x < (opts.rounds / 2));
+	}
+
 	clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &start);
 	
 	/* Start bench */
-	if (!opts.random) {
-		for (i = 0; i < opts.rounds; i++) {
-			rc = bpt_insertkey(h, (unsigned char *)kv[i].key,
-					   kv[i].len, 0, kv[i].value);
-			if (rc != 0) {
-				fprintf(stderr, "Failed to insert key: %s\n", kv[i].key);
-				goto out;
-			}
+	for (i = 0; i < opts.rounds; i++) {
+		rc = bpt_insertkey(h, (unsigned char *)kv[i].key,
+				   kv[i].len, 0, kv[i].value);
+		if (rc != 0) {
+			fprintf(stderr, "Failed to insert key: %s\n", kv[i].key);
+			goto out;
 		}
 	}
 
 	clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &stop);
 
-	time = (stop.tv_sec - start.tv_sec) + (stop.tv_nsec - start.tv_nsec) / 1e9;
+	bpt_getiostat(h, &iostat);
+
+	t = (stop.tv_sec - start.tv_sec) + (stop.tv_nsec - start.tv_nsec) / 1e9;
 
 	printf("Bench summary: \n");
-	printf("Page bits: %d\n", opts.page_bits);
-	printf("Number of keys: %d\n", opts.rounds);
-	printf("Operation: %s\n", opts.read ? "read" : "write");
-	printf("IO pattern: %s\n", opts.random ? "random" : "sequential");
-	printf("Elapsed time: %f seconds\n", time);
+	print_seperator();
+	dump_options(&opts);
+	print_seperator();
+	printf("Elapsed time: %f seconds\n", t);
+	print_seperator();
+	dump_bpt_iostat(&iostat);
 
  out:
 	if (h) {
@@ -129,3 +161,9 @@ static void usage()
 	       opts.page_bits, opts.rounds, opts.read ? "read" : "write",
 	       opts.random ? "random" : "sequential");
 }
+
+static void print_seperator()
+{
+	printf("========================================\n");
+}
+

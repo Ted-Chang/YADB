@@ -71,6 +71,7 @@ struct bplustree {
 	struct bpt_page *page;	// current page
 	int fd;
 	unsigned char *mem;
+	struct bpt_iostat iostat;
 };
 
 int bpt_insertkey(bpt_handle h, unsigned char *key,
@@ -232,6 +233,7 @@ int bpt_updatepage(bpt_handle h, struct bpt_page *page, bpt_pageno_t page_no)
 		return -1;
 	}
 
+	__sync_add_and_fetch(&bpt->iostat.writes, 1);
 	return 0;
 }
 
@@ -248,6 +250,7 @@ int bpt_mappage(bpt_handle h, struct bpt_page *page, bpt_pageno_t page_no)
 		return -1;
 	}
 
+	__sync_add_and_fetch(&bpt->iostat.reads, 1);
 	return 0;
 }
 
@@ -1045,6 +1048,14 @@ unsigned int bpt_nextkey(bpt_handle h, unsigned int slot)
 
 	bpt->errno = 0;
 	return 0;
+}
+
+void bpt_getiostat(bpt_handle h, struct bpt_iostat *iostat)
+{
+	struct bplustree *bpt;
+
+	bpt = (struct bplustree *)h;
+	*iostat = bpt->iostat;
 }
 
 #ifdef _UNITTEST

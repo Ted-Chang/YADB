@@ -11,5 +11,5 @@ bench: bench.o bptree.o
 	$(CC) $^ -o $@
 
 clean:
-	rm *.o yadb bench
+	rm *.o bptest bench
 

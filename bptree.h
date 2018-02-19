@@ -6,6 +6,11 @@ typedef unsigned char bpt_level;
 typedef unsigned long long bpt_pageno_t;
 typedef unsigned char boolean_t;
 
+struct bpt_iostat {
+	volatile unsigned long long reads;
+	volatile unsigned long long writes;
+};
+
 extern bpt_handle bpt_open(const char *name, unsigned int page_bits);
 extern void bpt_close(bpt_handle h);
 extern int bpt_insertkey(bpt_handle h, unsigned char *key,
@@ -16,5 +21,6 @@ extern int bpt_deletekey(bpt_handle h, unsigned char *key,
 extern unsigned int bpt_firstkey(bpt_handle h, unsigned char *key,
 				 unsigned int len);
 extern unsigned int bpt_nextkey(bpt_handle h, unsigned int slot);
+extern void bpt_getiostat(bpt_handle h, struct bpt_iostat *iostat);
 
 #endif	/* __BPTREE_H__ */
