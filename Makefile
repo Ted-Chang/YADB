@@ -5,7 +5,7 @@ CC = gcc
 all: bptest bench
 
 bptest:
-	$(CC) -D_UNITTEST bptree.c -o bptest
+	$(CC) -g -D_UNITTEST bptree.c -o bptest
 
 bench: bench.o bptree.o
 	$(CC) $^ -o $@

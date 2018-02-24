@@ -11,7 +11,8 @@ struct bpt_iostat {
 	volatile unsigned long long writes;
 };
 
-extern bpt_handle bpt_open(const char *name, unsigned int page_bits);
+extern bpt_handle bpt_open(const char *name, unsigned int page_bits,
+			   unsigned int entry_max);
 extern void bpt_close(bpt_handle h);
 extern int bpt_insertkey(bpt_handle h, unsigned char *key,
 			 unsigned int len, bpt_level level,

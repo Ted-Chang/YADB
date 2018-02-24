@@ -16,6 +16,7 @@ struct bench_option {
 	int rounds;
 	int read;
 	int random;
+	unsigned int cache_capacity;
 };
 
 static void usage();
@@ -25,6 +26,7 @@ struct bench_option opts = {
 	12,
 	50000,
 	1,
+	0,
 	0
 };
 
@@ -34,6 +36,7 @@ static void dump_options(struct bench_option *options)
 	printf("Number of keys: %d\n", options->rounds);
 	printf("Operation: %s\n", options->read ? "read" : "write");
 	printf("IO pattern: %s\n", options->random ? "random" : "sequential");
+	printf("Cache capacity: %d\n", options->cache_capacity);
 }
 
 static void dump_bpt_iostat(struct bpt_iostat *iostat)
@@ -55,7 +58,7 @@ int main(int argc, char *argv[])
 	struct key_value *kv = NULL;
 	struct key_value temp;
 
-	while ((ch = getopt(argc, argv, "p:n:o:rh")) != -1) {
+	while ((ch = getopt(argc, argv, "p:n:o:rc:h")) != -1) {
 		switch (ch) {
 		case 'p':
 			opts.page_bits = atoi(optarg);
@@ -76,6 +79,9 @@ int main(int argc, char *argv[])
 		case 'r':
 			opts.random = 1;
 			break;
+		case 'c':
+			opts.cache_capacity = atoi(optarg);
+			break;
 		case 'h':
 		default:
 			usage();
@@ -84,7 +90,7 @@ int main(int argc, char *argv[])
 	}
 
 	/* Create/Open database */
-	h = bpt_open("bpt.dat", opts.page_bits);
+	h = bpt_open("bpt.dat", opts.page_bits, opts.cache_capacity);
 	if (h == NULL) {
 		fprintf(stderr, "Failed to create/open bplustree!\n");
 		goto out;
@@ -152,14 +158,15 @@ int main(int argc, char *argv[])
 
 static void usage()
 {
-	printf("usage: bench [-p <page-bits>] [-n <num-keys>] [-o <read/write>] [-r]\n");
+	printf("usage: bench [-p <page-bits>] [-n <num-keys>] [-o <read/write>] [-r] [-c <capacity>]\n");
 	printf("default options:\n"
 	       "\tPage bits      : %d\n"
 	       "\tNumber of keys : %d\n"
 	       "\tOperation      : %s\n"
-	       "\tIO pattern     : %s\n",
+	       "\tIO pattern     : %s\n"
+	       "\tCache capacity : %d\n",
 	       opts.page_bits, opts.rounds, opts.read ? "read" : "write",
-	       opts.random ? "random" : "sequential");
+	       opts.random ? "random" : "sequential", opts.cache_capacity);
 }
 
 static void print_seperator()
