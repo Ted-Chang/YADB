@@ -9,6 +9,9 @@ typedef unsigned char boolean_t;
 struct bpt_iostat {
 	volatile unsigned long long reads;
 	volatile unsigned long long writes;
+	volatile unsigned long long cache_miss;
+	volatile unsigned long long cache_hit;
+	volatile unsigned long long cache_retire;
 };
 
 extern bpt_handle bpt_open(const char *name, unsigned int page_bits,

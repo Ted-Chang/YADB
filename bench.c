@@ -42,8 +42,11 @@ static void dump_options(struct bench_option *options)
 static void dump_bpt_iostat(struct bpt_iostat *iostat)
 {
 	printf("BPT iostat:\n");
-	printf("reads  : %lld\n", iostat->reads);
-	printf("writes : %lld\n", iostat->writes);
+	printf("reads        : %lld\n", iostat->reads);
+	printf("writes       : %lld\n", iostat->writes);
+	printf("cache miss   : %lld\n", iostat->cache_miss);
+	printf("cache hit    : %lld\n", iostat->cache_hit);
+	printf("cache retire : %lld\n", iostat->cache_retire);
 }
 
 int main(int argc, char *argv[])
