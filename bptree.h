@@ -1,6 +1,14 @@
 #ifndef __BPTREE_H__
 #define __BPTREE_H__
 
+#ifndef TRUE
+#define TRUE	1
+#endif
+
+#ifndef FALSE
+#define FALSE	0
+#endif
+
 typedef void * bpt_handle;
 typedef unsigned char bpt_level;
 typedef unsigned long long bpt_pageno_t;

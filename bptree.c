@@ -84,6 +84,11 @@ struct bplustree {
 	unsigned char *mem;
 	struct bpt_iostat iostat;
 	
+	/* deletekey returns OK even when the key does not exist.
+	 * This is used to indicate whether the key was found in tree.
+	 */
+	int found;
+	
 	/* LRU cache items */
 	unsigned int mapped_io;
 	int entry_cnt;		// current number of cache segments
@@ -1163,11 +1168,14 @@ int bpt_deletekey(bpt_handle h, unsigned char *key,
 	unsigned int slot;
 	unsigned int i;
 	bpt_pageno_t right, page_no;
-	boolean_t fence, found, dirty;
+	boolean_t fence = FALSE;
+	boolean_t found = FALSE;
+	boolean_t dirty = FALSE;
 	unsigned char lowerkey[257];
 	unsigned char higherkey[257];
 
 	bpt = (struct bplustree *)h;
+	bpt->errno = 0;
 
 	slot = bpt_loadpage(bpt, key, len, level);
 	if (slot) {
@@ -1198,6 +1206,13 @@ int bpt_deletekey(bpt_handle h, unsigned char *key,
 		}
 	}
 
+	bpt->found = found;
+
+	/* If the key was not found, just return OK */
+	if (!found) {
+		goto out;
+	}
+
 	right = bpt_getpageno(bpt->page->right);
 	page_no = bpt->page_no;
 
@@ -1206,7 +1221,6 @@ int bpt_deletekey(bpt_handle h, unsigned char *key,
 		if (bpt_fixfence(bpt, page_no, level)) {
 			goto out;
 		}
-		bpt->errno = 0;
 		goto out;
 	}
 
@@ -1217,7 +1231,6 @@ int bpt_deletekey(bpt_handle h, unsigned char *key,
 		if (bpt_collapseroot(bpt, bpt->page)) {
 			goto out;
 		}
-		bpt->errno = 0;
 		goto out;
 	}
 
@@ -1226,7 +1239,6 @@ int bpt_deletekey(bpt_handle h, unsigned char *key,
 		if (dirty && bpt_updatepage(bpt, bpt->page, page_no)) {
 			goto out;
 		}
-		bpt->errno = 0;
 		goto out;
 	}
 
@@ -1454,6 +1466,8 @@ int main(int argc, char *argv[])
 	int ret = 0;
 	unsigned int slot;
 
+	printf("Test with cache disabled:\n");
+
 	h = bpt_open(path, 9, 0);
 	if (h == NULL) {
 		fprintf(stderr, "Failed to open bplustree!\n");
@@ -1509,15 +1523,12 @@ int main(int argc, char *argv[])
 		goto out;
 	}
 
-	rc = bpt_deletekey(bpt, (unsigned char *)key3, key3_len, 0);
+	rc = bpt_deletekey(bpt, (unsigned char *)key2, key2_len, 0);
 	if (rc != 0) {
-		fprintf(stderr, "Failed to delete key: %s\n", key3);
+		fprintf(stderr, "Delete nonexistent key failed!\n");
 		goto out;
-	}
-
-	page_no = bpt_findkey(bpt, (unsigned char *)key3, key3_len);
-	if (page_no != 0) {
-		fprintf(stderr, "Deleted key found: %s->0x%llx\n", key3, page_no);
+	} else if (bpt->found != 0) {
+		fprintf(stderr, "Nonexistent key found!\n");
 		goto out;
 	}
 
