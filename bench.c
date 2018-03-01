@@ -70,9 +70,11 @@ int main(int argc, char *argv[])
 			opts.rounds = atoi(optarg);
 			break;
 		case 'o':
-			if (strcmp(optarg, "read") == 0) {
+			if (strcmp(optarg, "r") == 0) {
 				opts.read = 1;
-			} else if (strcmp(optarg, "write") == 0) {
+			} else if (strcmp(optarg, "w") == 0) {
+				opts.read = 0;
+			} else if (strcmp(optarg, "rw") == 0) {
 				opts.read = 0;
 			} else {
 				fprintf(stderr, "Illegal operation:%s\n", optarg);
