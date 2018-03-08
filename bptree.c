@@ -516,7 +516,7 @@ struct bpt_page *bpt_hashpage(struct bplustree *bpt, bpt_pageno_t page_no)
 {
 	struct bpt_hash *entry, *temp, *next;
 	struct bpt_page *page = NULL;
-
+	
 	/* Find the page in cache and move to top of LRU list */
 	entry = bpt_findhash(bpt, page_no);
 	if (entry) {
@@ -862,8 +862,8 @@ unsigned int bpt_loadpage(struct bplustree *bpt, unsigned char *key,
 
 		if (bpt->page->level != drill) {
 			if (bpt->page_no != PAGE_ROOT) {
-				LOG(DBG, "page(0x%llx) illegal level\n",
-				    bpt->page_no);
+				LOG(ERR, "page(0x%llx) illegal level(%d), drill(%d)\n",
+				    bpt->page_no, bpt->page->level, drill);
 				bpt->errno = -1;
 				goto out;
 			}
@@ -1271,7 +1271,8 @@ int bpt_insertkey(bpt_handle h, unsigned char *key,
 	return bpt->errno;
 }
 
-bpt_pageno_t bpt_findkey(bpt_handle h, unsigned char *key, unsigned int len)
+bpt_pageno_t bpt_findkey(bpt_handle h, unsigned char *key,
+			 unsigned int len)
 {
 	unsigned int slot;
 	struct bplustree *bpt;
@@ -1296,7 +1297,8 @@ bpt_pageno_t bpt_findkey(bpt_handle h, unsigned char *key, unsigned int len)
 	return page_no;
 }
 
-int bpt_fixfence(struct bplustree *bpt, bpt_pageno_t page_no, bpt_level level)
+int bpt_fixfence(struct bplustree *bpt, bpt_pageno_t page_no,
+		 bpt_level level)
 {
 	struct bpt_key *ptr;
 	unsigned char leftkey[257];
@@ -1566,7 +1568,8 @@ struct bpt_key *bpt_key(bpt_handle h, unsigned int slot)
 	return keyptr(bpt->cursor, slot);
 }
 
-unsigned int bpt_firstkey(bpt_handle h, unsigned char *key, unsigned int len)
+unsigned int bpt_firstkey(bpt_handle h, unsigned char *key,
+			  unsigned int len)
 {
 	struct bplustree *bpt;
 	unsigned int slot;
@@ -1932,7 +1935,6 @@ int main(int argc, char *argv[])
 		if (rc != 0) {
 			fprintf(stderr, "Failed to insert key: %s\n", key);
 			goto out;
-			break;
 		}
 	}
 	
@@ -1945,7 +1947,7 @@ int main(int argc, char *argv[])
 			goto out;
 		}
 	}
-	
+
  out:
 	if (h) {
 		bpt_close(h);
