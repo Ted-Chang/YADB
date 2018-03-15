@@ -27,7 +27,7 @@ struct bench_option {
 
 struct thread_info {
 	pthread_t thread;
-	bpt_handle bpt;
+	bptree_t bpt;
 	struct key_value *kv;
 	int kv_cnt;
 };
@@ -112,7 +112,7 @@ int main(int argc, char *argv[])
 {
 	int rc = 0;
 	int ch = 0;
-	bpt_handle h = NULL;
+	bptree_t h = NULL;
 	struct bpt_iostat iostat;
 	int i, j, x;
 	struct timespec start, stop;
@@ -236,10 +236,13 @@ int main(int argc, char *argv[])
 		}
 	}
 
-	clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &start);
+	clock_gettime(CLOCK_REALTIME, &start);
 	
 	/* Start bench */
 	if (opts.nr_threads > 1) {// Multi-thread bench
+		printf("Multi-thread bench not supported yet. Comming soon!\n");
+		goto out;
+		
 		rc = pthread_mutex_lock(&bench_mutex);
 		if (rc != 0) {
 			fprintf(stderr, "Failed to lock bench mutex!\n");
@@ -277,7 +280,7 @@ int main(int argc, char *argv[])
 		}
 	}
 
-	clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &stop);
+	clock_gettime(CLOCK_REALTIME, &stop);
 
 	bpt_getiostat(h, &iostat);
 

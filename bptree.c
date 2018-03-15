@@ -88,7 +88,7 @@ struct bpt_hash {
 };
 
 /* B+tree */
-struct bplustree {
+struct bptree {
 	unsigned int page_size;
 	unsigned int page_bits;
 	int errno;		// errno of last operation
@@ -122,10 +122,10 @@ struct bplustree {
 	struct bpt_hash entries[1];// cache entries
 };
 
-int bpt_insertkey(bpt_handle h, unsigned char *key,
+int bpt_insertkey(bptree_t h, unsigned char *key,
 		  unsigned int len, bpt_level level,
 		  bpt_pageno_t page_no);
-int bpt_deletekey(bpt_handle h, unsigned char *key,
+int bpt_deletekey(bptree_t h, unsigned char *key,
 		  unsigned int len, bpt_level level);
 
 void bpt_putpageno(unsigned char *dst, bpt_pageno_t page_no)
@@ -171,7 +171,7 @@ int keycmp(struct bpt_key *key1, unsigned char *key2, unsigned int len2)
 	return 0;
 }
 
-int bpt_lockpage(struct bplustree *bpt, bpt_pageno_t page_no,
+int bpt_lockpage(struct bptree *bpt, bpt_pageno_t page_no,
 		 bpt_mode_t mode)
 {
 	off_t offset = page_no << bpt->page_bits;
@@ -202,7 +202,7 @@ int bpt_lockpage(struct bplustree *bpt, bpt_pageno_t page_no,
 	return bpt->errno;
 }
 
-int bpt_unlockpage(struct bplustree *bpt, bpt_pageno_t page_no,
+int bpt_unlockpage(struct bptree *bpt, bpt_pageno_t page_no,
 		   bpt_mode_t mode)
 {
 	off_t offset = page_no << bpt->page_bits;
@@ -231,11 +231,11 @@ int bpt_unlockpage(struct bplustree *bpt, bpt_pageno_t page_no,
 	return bpt->errno;
 }
 
-bpt_handle bpt_open(const char *name, unsigned int page_bits,
-		    unsigned int entry_max)
+bptree_t bpt_open(const char *name, unsigned int page_bits,
+		  unsigned int entry_max)
 {
 	int rc = 0;
-	struct bplustree *bpt = NULL;
+	struct bptree *bpt = NULL;
 	struct bpt_key *key = NULL;
 	size_t size;
 	unsigned int cache_blk, last;
@@ -248,7 +248,7 @@ bpt_handle bpt_open(const char *name, unsigned int page_bits,
 		goto out;
 	}
 
-	size = sizeof(struct bplustree) + entry_max*sizeof(struct bpt_hash);
+	size = sizeof(struct bptree) + entry_max*sizeof(struct bpt_hash);
 	bpt = malloc(size);
 	if (bpt == NULL) {
 		rc = -1;
@@ -382,12 +382,12 @@ bpt_handle bpt_open(const char *name, unsigned int page_bits,
 	return bpt;
 }
 
-void bpt_close(bpt_handle h)
+void bpt_close(bptree_t h)
 {
-	struct bplustree *bpt;
+	struct bptree *bpt;
 	struct bpt_hash *entry;
 
-	bpt = (struct bplustree *)h;
+	bpt = (struct bptree *)h;
 	entry = bpt->lru_first;
 	if (entry) {
 		do {
@@ -407,7 +407,7 @@ void bpt_close(bpt_handle h)
 	free(bpt);
 }
 
-struct bpt_hash *bpt_findhash(struct bplustree *bpt, bpt_pageno_t page_no)
+struct bpt_hash *bpt_findhash(struct bptree *bpt, bpt_pageno_t page_no)
 {
 	struct bpt_hash *entry;
 	unsigned int index;
@@ -428,7 +428,7 @@ struct bpt_hash *bpt_findhash(struct bplustree *bpt, bpt_pageno_t page_no)
 	return entry;
 }
 
-void bpt_linkhash(struct bplustree *bpt, struct bpt_hash *entry,
+void bpt_linkhash(struct bptree *bpt, struct bpt_hash *entry,
 		  bpt_pageno_t page_no)
 {
 	struct bpt_hash *temp;
@@ -446,7 +446,7 @@ void bpt_linkhash(struct bplustree *bpt, struct bpt_hash *entry,
 	bpt->buckets[index] = (unsigned short)(entry - bpt->entries);
 }
 
-void bpt_unlinkhash(struct bplustree *bpt, struct bpt_hash *entry)
+void bpt_unlinkhash(struct bptree *bpt, struct bpt_hash *entry)
 {
 	struct bpt_hash *temp;
 	unsigned int index;
@@ -468,7 +468,7 @@ void bpt_unlinkhash(struct bplustree *bpt, struct bpt_hash *entry)
 	}
 }
 
-struct bpt_page *bpt_linklru(struct bplustree *bpt,
+struct bpt_page *bpt_linklru(struct bptree *bpt,
 			     struct bpt_hash *entry,
 			     bpt_pageno_t page_no)
 {
@@ -512,7 +512,7 @@ struct bpt_page *bpt_linklru(struct bplustree *bpt,
 				    bpt->page_bits));
 }
 
-struct bpt_page *bpt_hashpage(struct bplustree *bpt, bpt_pageno_t page_no)
+struct bpt_page *bpt_hashpage(struct bptree *bpt, bpt_pageno_t page_no)
 {
 	struct bpt_hash *entry, *temp, *next;
 	struct bpt_page *page = NULL;
@@ -598,7 +598,7 @@ struct bpt_page *bpt_hashpage(struct bplustree *bpt, bpt_pageno_t page_no)
 	return page;
 }
 
-int bpt_updatepage(struct bplustree *bpt, struct bpt_page *page,
+int bpt_updatepage(struct bptree *bpt, struct bpt_page *page,
 		   bpt_pageno_t page_no)
 {
 	off_t offset;
@@ -617,7 +617,7 @@ int bpt_updatepage(struct bplustree *bpt, struct bpt_page *page,
 	return 0;
 }
 
-int bpt_mappage(struct bplustree *bpt, struct bpt_page **page,
+int bpt_mappage(struct bptree *bpt, struct bpt_page **page,
 		bpt_pageno_t page_no)
 {
 	off_t offset;
@@ -639,7 +639,7 @@ int bpt_mappage(struct bplustree *bpt, struct bpt_page **page,
 	return 0;
 }
 
-bpt_pageno_t bpt_newpage(struct bplustree *bpt, struct bpt_page *page)
+bpt_pageno_t bpt_newpage(struct bptree *bpt, struct bpt_page *page)
 {
 	bpt_pageno_t new_page = 0;
 	boolean_t reuse = 0;
@@ -726,7 +726,7 @@ bpt_pageno_t bpt_newpage(struct bplustree *bpt, struct bpt_page *page)
 	return new_page;
 }
 
-int bpt_freepage(struct bplustree *bpt, bpt_pageno_t page_no)
+int bpt_freepage(struct bptree *bpt, bpt_pageno_t page_no)
 {
 	/* Retrieve the page allocaction info */
 	if (bpt_mappage(bpt, &bpt->alloc, PAGE_ALLOC)) {
@@ -780,7 +780,7 @@ int bpt_freepage(struct bplustree *bpt, bpt_pageno_t page_no)
 	return bpt->errno;
 }
 
-unsigned int bpt_findslot(struct bplustree *bpt, unsigned char *key,
+unsigned int bpt_findslot(struct bptree *bpt, unsigned char *key,
 			  unsigned int len)
 {
 	int slot;
@@ -809,7 +809,7 @@ unsigned int bpt_findslot(struct bplustree *bpt, unsigned char *key,
 	return (high > bpt->page->count) ? 0 : high;
 }
 
-unsigned int bpt_loadpage(struct bplustree *bpt, unsigned char *key,
+unsigned int bpt_loadpage(struct bptree *bpt, unsigned char *key,
 			  unsigned int len, bpt_level level,
 			  bpt_mode_t lock)
 {
@@ -833,9 +833,9 @@ unsigned int bpt_loadpage(struct bplustree *bpt, unsigned char *key,
 			BPT_LOCK_WRITE : BPT_LOCK_READ;
 		
 		bpt->page_no = page_no;
-
+		
 		if (page_no > PAGE_ROOT) {
-			if (bpt_lockpage(bpt, bpt->page_no, BPT_LOCK_ACCESS)) {
+			if (bpt_lockpage(bpt, page_no, BPT_LOCK_ACCESS)) {
 				goto out;
 			}
 		}
@@ -846,12 +846,12 @@ unsigned int bpt_loadpage(struct bplustree *bpt, unsigned char *key,
 			}
 		}
 
-		if (bpt_lockpage(bpt, bpt->page_no, mode)) {
+		if (bpt_lockpage(bpt, page_no, mode)) {
 			goto out;
 		}
 
 		if (page_no > PAGE_ROOT) {
-			if (bpt_unlockpage(bpt, bpt->page_no, BPT_LOCK_ACCESS)) {
+			if (bpt_unlockpage(bpt, page_no, BPT_LOCK_ACCESS)) {
 				goto out;
 			}
 		}
@@ -861,9 +861,9 @@ unsigned int bpt_loadpage(struct bplustree *bpt, unsigned char *key,
 		}
 
 		if (bpt->page->level != drill) {
-			if (bpt->page_no != PAGE_ROOT) {
+			if (page_no != PAGE_ROOT) {
 				LOG(ERR, "page(0x%llx) illegal level(%d), drill(%d)\n",
-				    bpt->page_no, bpt->page->level, drill);
+				    page_no, bpt->page->level, drill);
 				bpt->errno = -1;
 				goto out;
 			}
@@ -884,7 +884,7 @@ unsigned int bpt_loadpage(struct bplustree *bpt, unsigned char *key,
 			}
 		}
 
-		prev_page = bpt->page_no;
+		prev_page = page_no;
 		prev_mode = mode;
 
 		/* Find the key on page at this level and descend
@@ -928,7 +928,7 @@ unsigned int bpt_loadpage(struct bplustree *bpt, unsigned char *key,
 	return 0;
 }
 
-unsigned int bpt_cleanpage(struct bplustree *bpt, unsigned len,
+unsigned int bpt_cleanpage(struct bptree *bpt, unsigned len,
 			   unsigned int slot)
 {
 	struct bpt_page *page;
@@ -994,7 +994,7 @@ unsigned int bpt_cleanpage(struct bplustree *bpt, unsigned len,
 	return 0;
 }
 
-int bpt_splitroot(struct bplustree *bpt, unsigned char *leftkey,
+int bpt_splitroot(struct bptree *bpt, unsigned char *leftkey,
 		  bpt_pageno_t page_no2)
 {
 	struct bpt_page *root;
@@ -1047,7 +1047,7 @@ int bpt_splitroot(struct bplustree *bpt, unsigned char *leftkey,
 	return bpt->errno;
 }
 
-int bpt_splitpage(struct bplustree *bpt)
+int bpt_splitpage(struct bptree *bpt)
 {
 	struct bpt_page *page;
 	struct bpt_key *key;
@@ -1174,17 +1174,17 @@ int bpt_splitpage(struct bplustree *bpt)
 	return bpt->errno;
 }
 
-int bpt_insertkey(bpt_handle h, unsigned char *key,
+int bpt_insertkey(bptree_t h, unsigned char *key,
 		  unsigned int len, bpt_level level,
 		  bpt_pageno_t page_no)
 {
-	struct bplustree *bpt;
+	struct bptree *bpt;
 	struct bpt_key *ptr;
 	struct bpt_page *page;
 	unsigned int slot;
 	unsigned int i;
 
-	bpt = (struct bplustree *)h;
+	bpt = (struct bptree *)h;
 
 	while (1) {
 		slot = bpt_loadpage(bpt, key, len, level, BPT_LOCK_WRITE);
@@ -1271,15 +1271,15 @@ int bpt_insertkey(bpt_handle h, unsigned char *key,
 	return bpt->errno;
 }
 
-bpt_pageno_t bpt_findkey(bpt_handle h, unsigned char *key,
+bpt_pageno_t bpt_findkey(bptree_t h, unsigned char *key,
 			 unsigned int len)
 {
 	unsigned int slot;
-	struct bplustree *bpt;
+	struct bptree *bpt;
 	struct bpt_key *ptr;
 	bpt_pageno_t page_no;
 
-	bpt = (struct bplustree *)h;
+	bpt = (struct bptree *)h;
 	page_no = 0;
 
 	slot = bpt_loadpage(bpt, key, len, 0, BPT_LOCK_READ);
@@ -1297,7 +1297,7 @@ bpt_pageno_t bpt_findkey(bpt_handle h, unsigned char *key,
 	return page_no;
 }
 
-int bpt_fixfence(struct bplustree *bpt, bpt_pageno_t page_no,
+int bpt_fixfence(struct bptree *bpt, bpt_pageno_t page_no,
 		 bpt_level level)
 {
 	struct bpt_key *ptr;
@@ -1343,7 +1343,7 @@ int bpt_fixfence(struct bplustree *bpt, bpt_pageno_t page_no,
 	return bpt->errno;
 }
 
-int bpt_collapseroot(struct bplustree *bpt, struct bpt_page *root)
+int bpt_collapseroot(struct bptree *bpt, struct bpt_page *root)
 {
 	bpt_pageno_t child;
 	unsigned int i;
@@ -1391,10 +1391,10 @@ int bpt_collapseroot(struct bplustree *bpt, struct bpt_page *root)
 	return bpt->errno;
 }
 
-int bpt_deletekey(bpt_handle h, unsigned char *key,
+int bpt_deletekey(bptree_t h, unsigned char *key,
 		  unsigned int len, bpt_level level)
 {
-	struct bplustree *bpt;
+	struct bptree *bpt;
 	struct bpt_key *ptr;
 	unsigned int slot;
 	unsigned int i;
@@ -1405,7 +1405,7 @@ int bpt_deletekey(bpt_handle h, unsigned char *key,
 	unsigned char lowerkey[257];
 	unsigned char higherkey[257];
 
-	bpt = (struct bplustree *)h;
+	bpt = (struct bptree *)h;
 	bpt->errno = 0;
 
 	slot = bpt_loadpage(bpt, key, len, level, BPT_LOCK_WRITE);
@@ -1559,22 +1559,22 @@ int bpt_deletekey(bpt_handle h, unsigned char *key,
 	return bpt->errno;
 }
 
-struct bpt_key *bpt_key(bpt_handle h, unsigned int slot)
+struct bpt_key *bpt_key(bptree_t h, unsigned int slot)
 {
-	struct bplustree *bpt;
+	struct bptree *bpt;
 	
-	bpt = (struct bplustree *)h;
+	bpt = (struct bptree *)h;
 	
 	return keyptr(bpt->cursor, slot);
 }
 
-unsigned int bpt_firstkey(bpt_handle h, unsigned char *key,
+unsigned int bpt_firstkey(bptree_t h, unsigned char *key,
 			  unsigned int len)
 {
-	struct bplustree *bpt;
+	struct bptree *bpt;
 	unsigned int slot;
 
-	bpt = (struct bplustree *)h;
+	bpt = (struct bptree *)h;
 	
 	slot = bpt_loadpage(bpt, key, len, 0, BPT_LOCK_READ);
 	if (slot) {
@@ -1592,12 +1592,12 @@ unsigned int bpt_firstkey(bpt_handle h, unsigned char *key,
 	return slot;
 }
 
-unsigned int bpt_nextkey(bpt_handle h, unsigned int slot)
+unsigned int bpt_nextkey(bptree_t h, unsigned int slot)
 {
-	struct bplustree *bpt;
+	struct bptree *bpt;
 	bpt_pageno_t right;
 
-	bpt = (struct bplustree *)h;
+	bpt = (struct bptree *)h;
 	
 	do {
 		right = bpt_getpageno(bpt->cursor->right);
@@ -1643,11 +1643,11 @@ unsigned int bpt_nextkey(bpt_handle h, unsigned int slot)
 	return 0;
 }
 
-void bpt_getiostat(bpt_handle h, struct bpt_iostat *iostat)
+void bpt_getiostat(bptree_t h, struct bpt_iostat *iostat)
 {
-	struct bplustree *bpt;
+	struct bptree *bpt;
 
-	bpt = (struct bplustree *)h;
+	bpt = (struct bptree *)h;
 	*iostat = bpt->iostat;
 }
 
@@ -1685,7 +1685,7 @@ void dump_keys_in_page(struct bpt_page *page)
 
 void dump_page(struct bpt_page *page)
 {
-	printf("---------- bplustree page info -----------\n");
+	printf("---------- bptree page info -----------\n");
 	printf(" count  : %d\n", page->count);
 	printf(" active : %d\n", page->active);
 	printf(" level  : %d\n", page->level);
@@ -1697,7 +1697,7 @@ void dump_page(struct bpt_page *page)
 	printf("------------------------------------------\n");
 }
 
-void dump_lru(struct bplustree *bpt)
+void dump_lru(struct bptree *bpt)
 {
 	struct bpt_hash *temp;
 	int cnt = 0;
@@ -1712,9 +1712,9 @@ void dump_lru(struct bplustree *bpt)
 	printf("nil");
 }
 
-void dump_cache(struct bplustree *bpt)
+void dump_cache(struct bptree *bpt)
 {
-	printf("--------- bplustree cache info -----------\n");
+	printf("--------- bptree cache info -----------\n");
 	printf(" entry_max : %d\n", bpt->entry_max);
 	printf(" entry_cnt : %d\n", bpt->entry_cnt);
 	printf(" hash_size : %d\n", bpt->hash_size);
@@ -1729,9 +1729,9 @@ void dump_cache(struct bplustree *bpt)
 int main(int argc, char *argv[])
 {
 	int rc = 0;
-	bpt_handle h = NULL;
+	bptree_t h = NULL;
 	const char *path = "bpt.dat";
-	struct bplustree *bpt = NULL;
+	struct bptree *bpt = NULL;
 	struct bpt_key *k = NULL;
 	struct bpt_page *page;
 	struct bpt_hash *entry;
@@ -1752,11 +1752,11 @@ int main(int argc, char *argv[])
 
 	h = bpt_open(path, 9, 0);
 	if (h == NULL) {
-		fprintf(stderr, "Failed to open bplustree!\n");
+		fprintf(stderr, "Failed to open bptree!\n");
 		goto out;
 	}
 
-	bpt = (struct bplustree *)h;
+	bpt = (struct bptree *)h;
 	
 	rc = bpt_insertkey(bpt, (unsigned char *)key1, key1_len, 0, 5);
 	if (rc != 0) {
@@ -1875,11 +1875,11 @@ int main(int argc, char *argv[])
 
 	h = bpt_open(path, 9, 8);
 	if (h == NULL) {
-		fprintf(stderr, "Failed to open bplustree with cache enabled!\n");
+		fprintf(stderr, "Failed to open bptree with cache enabled!\n");
 		goto out;
 	}
 
-	bpt = (struct bplustree *)h;
+	bpt = (struct bptree *)h;
 
 	page_no = PAGE_ROOT;
 	rc = bpt_mappage(bpt, &bpt->temp, page_no);
