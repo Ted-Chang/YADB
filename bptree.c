@@ -26,17 +26,30 @@ unsigned int _bpt_trace_level = INF;
 #endif	/* LOG */
 
 /* Minimum page size 512 bytes and max page size 64K */
-#define MAX_BPT_PAGE_SHIFT	16
-#define MIN_BPT_PAGE_SHIFT	9
+#define BPT_MAX_PAGE_SHIFT	16
+#define BPT_MIN_PAGE_SHIFT	9
+#define BPT_MIN_PAGE_SIZE	(1 << BPT_MIN_PAGE_SHIFT)
 
-#define PAGE_ALLOC	0
-#define PAGE_ROOT	1	// root is always located at page 1
-#define PAGE_LEAF	2	// The first leaf page of level zero is always located at page 2
+#define PAGE_SUPER	0	// Page 0 is always reserved for super block
+#define PAGE_ALLOC	1	// Alloc page is the head of free page list
+#define PAGE_ROOT	2	// root is always located at page 2
+#define PAGE_LEAF	3	// The first leaf page of level zero is always located at page 2
 
 #define PAGE_NUM_BYTES	6	// Maximum addressable space is 6-bytes integer*max-page-size
 
 /* Minimum level of a new b+tree */
 #define MIN_LEVEL	2
+
+#define BPT_MAGIC	"BPLUSTREE"
+#define BPT_MAJOR	1
+#define BPT_MINOR	0
+
+struct bpt_super_block {
+	char magic[16];
+	unsigned int major;
+	unsigned int minor;
+	unsigned int page_bits;
+};
 
 typedef enum {
 	BPT_LOCK_ACCESS,
@@ -47,10 +60,10 @@ typedef enum {
 } bpt_mode_t;
 
 struct bpt_slot {
-	unsigned int offset:MAX_BPT_PAGE_SHIFT;	// Page offset for the key start
+	unsigned int offset:BPT_MAX_PAGE_SHIFT;	// Page offset for the key start
 	unsigned int dead:1;	// Set for deleted key
 	unsigned int reserved:17;
-	unsigned char page_no[PAGE_NUM_BYTES]; // Page number associated with slot
+	unsigned char page_no[PAGE_NUM_BYTES]; // Child page associated with slot
 };
 
 struct bpt_key {
@@ -231,19 +244,31 @@ int bpt_unlockpage(struct bptree *bpt, bpt_pageno_t page_no,
 	return bpt->errno;
 }
 
+/* Bplustree file layout
+ * +------------------------+
+ * |      Super block       |
+ * +------------------------+
+ * |       root page        |
+ * +------------------------+
+ * |         ......         |
+ * +------------------------+
+ * |       leaf pages       |
+ * +------------------------+
+ */
 bptree_t bpt_open(const char *name, unsigned int page_bits,
 		  unsigned int entry_max)
 {
 	int rc = 0;
 	struct bptree *bpt = NULL;
 	struct bpt_key *key = NULL;
-	size_t size;
+	struct bpt_super_block *sb = NULL;
+	size_t size, fsize;
 	unsigned int cache_blk, last;
 	bpt_mode_t lock_mode = BPT_LOCK_WRITE;
 	bpt_level level;
 
-	if (page_bits > MAX_BPT_PAGE_SHIFT ||
-	    page_bits < MIN_BPT_PAGE_SHIFT) {
+	if (page_bits > BPT_MAX_PAGE_SHIFT ||
+	    page_bits < BPT_MIN_PAGE_SHIFT) {
 		rc = -1;
 		goto out;
 	}
@@ -260,6 +285,14 @@ bptree_t bpt_open(const char *name, unsigned int page_bits,
 	if (bpt->fd == -1) {
 		rc = -1;
 		goto out;
+	}
+
+	/* Read minimum page size to get root info */
+	if ((fsize = lseek(bpt->fd, 0, SEEK_END)) > BPT_MIN_PAGE_SIZE) {
+		sb = (struct bpt_super_block *)malloc(BPT_MIN_PAGE_SIZE);
+		pread(bpt->fd, sb, BPT_MIN_PAGE_SIZE, 0);
+		page_bits = sb->page_bits;
+		free(sb);
 	}
 
 	bpt->page_bits = page_bits;
@@ -322,19 +355,44 @@ bptree_t bpt_open(const char *name, unsigned int page_bits,
 	bpt->temp = (struct bpt_page *)(bpt->mem + 4*bpt->page_size);
 	bpt->zero = (struct bpt_page *)(bpt->mem + 5*bpt->page_size);
 
-	bpt_putpageno(bpt->alloc->right, MIN_LEVEL+1);
+	if (fsize > BPT_MIN_PAGE_SIZE) {
+		if (bpt_unlockpage(bpt, PAGE_ALLOC, lock_mode)) {
+			rc = bpt->errno;
+		}
+		goto out;
+	}
 
-	/* Write alloc page (page 0) */
+	/* Write super block */
+	sb = (struct bpt_super_block *)bpt->temp;
+	strcpy(sb->magic, BPT_MAGIC);
+	sb->major = BPT_MAJOR;
+	sb->minor = BPT_MINOR;
+	sb->page_bits = page_bits;
+	if (write(bpt->fd, sb, bpt->page_size) < bpt->page_size) {
+		rc = -1;
+		goto out;
+	}
+
+	/* Initialize empty b+tree with root page and page of leaves.
+	 * For empty b+tree, the first 2 page was reserved for super
+	 * block and alloc page, so the first free page is MIN_LEVEL+2.
+	 */
+	bpt_putpageno(bpt->alloc->right, MIN_LEVEL+2);
+
 	if (write(bpt->fd, bpt->alloc, bpt->page_size) < bpt->page_size) {
 		rc = -1;
 		goto out;
 	}
 
-	/* Initialize empty b+tree with root page and page of leaves. */
 	for (level = MIN_LEVEL; level--; ) {
+		/* Stopper key is 2 bytes, plus 1 byte for key length,
+		 * so 3 bytes
+		 */
 		slotptr(bpt->frame, 1)->offset = bpt->page_size - 3;
+
+		/* Set the child node correspondingly */
 		bpt_putpageno(slotptr(bpt->frame, 1)->page_no,
-			      level ? MIN_LEVEL-level+1 : 0);
+			      level ? MIN_LEVEL-level+2 : 0);
 		
 		/* Create stopper key */
 		key = keyptr(bpt->frame, 1);
@@ -1867,11 +1925,10 @@ int main(int argc, char *argv[])
 		}
 	}
 
-	/* Close b+tree and delete file */
+	/* Close b+tree */
 	bpt_close(h);
-	remove(path);
 
-	printf("\nTest with cache enabled:\n");
+	printf("\nReopen file with cache enabled:\n");
 
 	h = bpt_open(path, 9, 8);
 	if (h == NULL) {
@@ -1880,6 +1937,18 @@ int main(int argc, char *argv[])
 	}
 
 	bpt = (struct bptree *)h;
+
+	page_no = bpt_findkey(bpt, (unsigned char *)key3, key3_len);
+	if (page_no == 0) {
+		fprintf(stderr, "Failed to find previously inserted key: %s\n", key3);
+		goto out;
+	}
+
+	page_no = bpt_findkey(bpt, (unsigned char *)key1, key1_len);
+	if (page_no == 0) {
+		fprintf(stderr, "Failed to find previously inserted key: %s\n", key1);
+		goto out;
+	}
 
 	page_no = PAGE_ROOT;
 	rc = bpt_mappage(bpt, &bpt->temp, page_no);
