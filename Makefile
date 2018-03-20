@@ -8,7 +8,7 @@ bptest:
 	$(CC) -g -D_UNITTEST bptree.c -lpthread -o bptest
 
 bench: bench.o bptree.o
-	$(CC) $^ -lpthread -o $@
+	$(CC) $^ -lpthread -lrt -o $@
 
 clean:
 	rm *.o bptest bench

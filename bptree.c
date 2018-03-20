@@ -291,6 +291,15 @@ bptree_t bpt_open(const char *name, unsigned int page_bits,
 	if ((fsize = lseek(bpt->fd, 0, SEEK_END)) > BPT_MIN_PAGE_SIZE) {
 		sb = (struct bpt_super_block *)malloc(BPT_MIN_PAGE_SIZE);
 		pread(bpt->fd, sb, BPT_MIN_PAGE_SIZE, 0);
+		if (strcmp(sb->magic, BPT_MAGIC) != 0) {
+			rc = -1;
+			goto out;
+		}
+		if ((sb->page_bits < BPT_MIN_PAGE_SHIFT) ||
+		    (sb->page_bits > BPT_MAX_PAGE_SHIFT)) {
+			rc = -1;
+			goto out;
+		}
 		page_bits = sb->page_bits;
 		free(sb);
 	}
