@@ -274,8 +274,9 @@ bptree_t bpt_open(const char *name, unsigned int page_bits,
 	}
 
 	size = sizeof(struct bptree) + entry_max*sizeof(struct bpt_hash);
-	bpt = malloc(size);
+	bpt = (struct bptree *)malloc(size);
 	if (bpt == NULL) {
+		LOG(ERR, "malloc bptree, %ld bytes failed\n", size);
 		rc = -1;
 		goto out;
 	}
@@ -283,6 +284,7 @@ bptree_t bpt_open(const char *name, unsigned int page_bits,
 	memset(bpt, 0, size);
 	bpt->fd = open(name, O_RDWR|O_CREAT, 0666);
 	if (bpt->fd == -1) {
+		LOG(ERR, "open %s failed\n", name);
 		rc = -1;
 		goto out;
 	}
@@ -318,6 +320,7 @@ bptree_t bpt_open(const char *name, unsigned int page_bits,
 		
 		cache_blk = sysconf(_SC_PAGE_SIZE);
 		if (cache_blk == -1) {
+			LOG(ERR, "sysconf failed\n");
 			rc = -1;
 			goto out;
 		}
@@ -337,6 +340,7 @@ bptree_t bpt_open(const char *name, unsigned int page_bits,
 		size = bpt->hash_size * sizeof(unsigned short);
 		bpt->buckets = malloc(size);
 		if (bpt->buckets == NULL) {
+			LOG(ERR, "malloc buckets, %ld bytes failed\n", size);
 			rc = -1;
 			goto out;
 		}
@@ -378,6 +382,7 @@ bptree_t bpt_open(const char *name, unsigned int page_bits,
 	sb->minor = BPT_MINOR;
 	sb->page_bits = page_bits;
 	if (write(bpt->fd, sb, bpt->page_size) < bpt->page_size) {
+		LOG(ERR, "write sb, %d bytes failed\n", bpt->page_size);
 		rc = -1;
 		goto out;
 	}
@@ -389,6 +394,7 @@ bptree_t bpt_open(const char *name, unsigned int page_bits,
 	bpt_putpageno(bpt->alloc->right, MIN_LEVEL+2);
 
 	if (write(bpt->fd, bpt->alloc, bpt->page_size) < bpt->page_size) {
+		LOG(ERR, "write alloc, %d bytes failed\n", bpt->page_size);
 		rc = -1;
 		goto out;
 	}
@@ -416,6 +422,7 @@ bptree_t bpt_open(const char *name, unsigned int page_bits,
 
 		if (write(bpt->fd, bpt->frame, bpt->page_size) <
 		    bpt->page_size) {
+			LOG(ERR, "write page, level %d failed\n", level);
 			rc = -1;
 			goto out;
 		}

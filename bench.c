@@ -9,6 +9,7 @@
 #include <pthread.h>
 #include <fcntl.h>
 #include <sys/mman.h>
+#include <semaphore.h>
 #include "bptree.h"
 
 pthread_mutex_t bench_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -26,7 +27,7 @@ struct bench_option {
 	int rounds;
 	int read;
 	int random;
-	int cleanup;
+	int no_cleanup;
 	unsigned int cache_capacity;
 	unsigned int nr_threads;
 	unsigned int nr_processes;
@@ -52,7 +53,7 @@ struct bench_option opts = {
 	64*1024,// rounds
 	1,	// read
 	0,	// random
-	1,	// cleanup
+	0,	// no_cleanup
 	0,	// cache_capacity
 	1,	// nr_threads
 	1	// nr_processes
@@ -60,14 +61,14 @@ struct bench_option opts = {
 
 static void dump_options(struct bench_option *options)
 {
-	printf("Page bits: %d\n", options->page_bits);
-	printf("Number of keys: %d\n", options->rounds);
-	printf("Operation: %s\n", options->read ? "read" : "write");
-	printf("IO pattern: %s\n", options->random ? "random" : "sequential");
-	printf("Cache capacity: %d\n", options->cache_capacity);
-	printf("Number of threads: %d\n", options->nr_threads);
-	printf("Number of processes: %d\n", options->nr_processes);
-	printf("Clean up: %s\n", options->cleanup ? "true" : "false");
+	printf("Page bits           : %d\n", options->page_bits);
+	printf("Number of keys      : %d\n", options->rounds);
+	printf("Operation           : %s\n", options->read ? "read" : "write");
+	printf("IO pattern          : %s\n", options->random ? "random" : "sequential");
+	printf("Cache capacity      : %d\n", options->cache_capacity);
+	printf("Number of threads   : %d\n", options->nr_threads);
+	printf("Number of processes : %d\n", options->nr_processes);
+	printf("No clean up         : %s\n", options->no_cleanup ? "true" : "false");
 }
 
 static void vperror(const char *fmt, ...)
@@ -159,6 +160,10 @@ int main(int argc, char *argv[])
 	size_t shm_size = 0;
 	int shmfd = -1;
 	char *shm_name = "/bpt_bench";
+	pid_t pid = -1;
+	pid_t parent_pid = -1;
+	const char *bench_sem_name = "/bpt-bench";
+	sem_t *bench_sem = SEM_FAILED;
 
 	while ((ch = getopt(argc, argv, "p:n:o:rc:t:P:Ch")) != -1) {
 		switch (ch) {
@@ -199,6 +204,9 @@ int main(int argc, char *argv[])
 			if (opts.nr_threads == 0) {
 				fprintf(stderr, "threads number must greater than 0\n");
 				goto out;
+			} else {
+				printf("multi-thread test is not ready yet...\n");
+				goto out;
 			}
 			break;
 		case 'P':
@@ -209,7 +217,7 @@ int main(int argc, char *argv[])
 			}
 			break;
 		case 'C':
-			opts.cleanup = 1;
+			opts.no_cleanup = 1;
 			break;
 		case 'h':
 		default:
@@ -217,6 +225,8 @@ int main(int argc, char *argv[])
 			goto out;
 		}
 	}
+
+	parent_pid = getpid();
 
 	/* Create shared memory for kvs used for benchmarking */
 	shm_size = offsetof(struct shm_bench_kv, kvs) +
@@ -241,18 +251,19 @@ int main(int argc, char *argv[])
 		goto out;
 	}
 
-	/* Create/Open database */
+	/* Create/Open b+tree */
 	h = bpt_open("bpt.dat", opts.page_bits, opts.cache_capacity);
 	if (h == NULL) {
 		fprintf(stderr, "Failed to create/open bplustree!\n");
 		goto out;
 	}
 
-	/* Key prefill */
+	/* Key/value prefill */
 	memset(bench_kv, 0, shm_size);
 	bench_kv->nr_kvs = opts.rounds;
 	for (i = 0; i < bench_kv->nr_kvs; i++) {
-		bench_kv->kvs[i].len = sprintf(bench_kv->kvs[i].key, "benchmark_%08d", i);
+		bench_kv->kvs[i].len = sprintf(bench_kv->kvs[i].key,
+					       "benchmark_%08d", i);
 		bench_kv->kvs[i].value = i;
 	}
 
@@ -270,16 +281,60 @@ int main(int argc, char *argv[])
 		} while(x < (bench_kv->nr_kvs / 2));
 	}
 
+	/* Fork as many processes as requested */
+	if (opts.nr_processes > 1) {
+		/* Open semaphore for inter-process coordination */
+		bench_sem = sem_open(bench_sem_name, O_RDWR|O_CREAT|O_EXCL,
+				     0666, 0);
+		if (bench_sem == SEM_FAILED) {
+			vperror("create bench semaphore failed!");
+			goto out;
+		}
+		
+		for (i = 0; i < (opts.nr_processes - 1); i++) {
+			pid = fork();
+			if (pid == -1) {
+				vperror("fork %d failed!", i);
+				goto out;
+			}
+
+			if (pid == 0) {
+				/* We are child, go on to wait for
+				 * signal to start benchmarking
+				 */
+				break;
+			} else {
+				printf("forked process %d!\n", pid);
+			}
+		}
+		
+		pid = getpid();
+		if (pid == parent_pid) {
+			/* We are parent process, send signal to child
+			 * processes to start benchmarking. As parent
+			 * don't need to wait, so nr_processes - 1.
+			 */
+			for (i = 0; i < (opts.nr_processes - 1); i++) {
+				sem_post(bench_sem);
+			}
+		} else {
+			/* We are child process, waiting for signal */
+			sem_wait(bench_sem);
+			printf("process %d received signal, start benchmarking...\n",
+			       getpid());
+		}
+	}
+
 	/* Create threads if necessary */
 	if (opts.nr_threads > 1) {
 		/* Allocate thread info */
-		ti = malloc(opts.nr_threads * sizeof(struct thread_info));
+		ti = (struct thread_info *)malloc(opts.nr_threads * sizeof(*ti));
 		if (ti == NULL) {
 			fprintf(stderr, "Failed to allocate thread info!\n");
 			rc = -1;
 			goto out;
 		}
-		memset(ti, 0, opts.nr_threads * sizeof(ti[0]));
+		memset(ti, 0, opts.nr_threads * sizeof(*ti));
 		
 		/* Create threads */
 		for (i = 0; i < opts.nr_threads; i++) {
@@ -332,7 +387,7 @@ int main(int argc, char *argv[])
 				goto out;
 			}
 		}
-	} else {
+	} else { // Single thread bench
 		while ((i = __sync_add_and_fetch(&bench_kv->index, 1)) <
 		       bench_kv->nr_kvs) {
 			rc = bpt_insertkey(h, (unsigned char *)bench_kv->kvs[i].key,
@@ -346,40 +401,67 @@ int main(int argc, char *argv[])
 		}
 	}
 
+	if ((opts.nr_processes > 1) && (pid == parent_pid)) {
+		for (i = 0; i < (opts.nr_processes - 1); i++) {
+			sem_wait(bench_sem);
+		}
+	} else if ((opts.nr_processes > 1) && (pid != parent_pid)) {
+		sem_post(bench_sem);
+	}
+
 	clock_gettime(CLOCK_REALTIME, &end);
+	
+	printf("process %d benchmarking done!\n", pid);
 
 	bpt_getiostat(h, &iostat);
 
-	t = ((end.tv_sec - start.tv_sec) * 1e9 + (end.tv_nsec - start.tv_nsec)) / 1e9;
+	/* If there is only 1 process or we are the parent process then
+	 * print the benchmark summary
+	 */
+	if ((opts.nr_processes == 1) || (pid == parent_pid)) {
+		t = ((end.tv_sec - start.tv_sec) * 1e9 +
+		     (end.tv_nsec - start.tv_nsec)) / 1e9;
+		
+		printf("Bench summary: \n");
+		print_seperator();
+		dump_options(&opts);
+		print_seperator();
+		printf("Elapsed time: %f seconds\n", t);
+		print_seperator();
+		dump_bpt_iostat(&iostat);
 
-	printf("Bench summary: \n");
-	print_seperator();
-	dump_options(&opts);
-	print_seperator();
-	printf("Elapsed time: %f seconds\n", t);
-	print_seperator();
-	dump_bpt_iostat(&iostat);
-
-	if (opts.cleanup) {
-		struct key_value *kv = NULL;
-		for (i = 0; i < bench_kv->nr_kvs; i++) {
-			kv = &bench_kv->kvs[i];
-			rc = bpt_deletekey(h, (unsigned char *)kv->key,
-					   kv->len, 0);
-			if (rc != 0) {
-				fprintf(stderr, "Failed to delete key: %s\n",
-					kv->key);
+		if (!opts.no_cleanup) {
+			struct key_value *kv = NULL;
+			for (i = 0; i < bench_kv->nr_kvs; i++) {
+				kv = &bench_kv->kvs[i];
+				rc = bpt_deletekey(h, (unsigned char *)kv->key,
+						   kv->len, 0);
+				if (rc != 0) {
+					fprintf(stderr, "Failed to delete key: %s\n",
+						kv->key);
+				}
 			}
 		}
 	}
 
  out:
+	if (ti) {
+		free(ti);
+	}
+	if (bench_sem != SEM_FAILED) {
+		sem_close(bench_sem);
+		if ((opts.nr_processes == 1) || (pid == parent_pid)) {
+			sem_unlink(bench_sem_name);
+		}
+	}
 	if (shmfd) {
 		if (bench_kv != MAP_FAILED) {
 			munmap(bench_kv, shm_size);
 		}
 		close(shmfd);
-		shm_unlink(shm_name);
+		if ((opts.nr_processes == 1) || (pid == parent_pid)) {
+			shm_unlink(shm_name);
+		}
 	}
 	if (h) {
 		bpt_close(h);
