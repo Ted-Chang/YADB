@@ -9,10 +9,13 @@
 #define FALSE	0
 #endif
 
+#ifndef BOOL
+typedef unsigned char bool_t;
+#endif	/* BOOL */
+
 typedef void * bptree_t;
 typedef unsigned char bpt_level;
 typedef unsigned long long bpt_pageno_t;
-typedef unsigned char boolean_t;
 
 struct bpt_iostat {
 	volatile unsigned long long reads;

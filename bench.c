@@ -9,12 +9,14 @@
 #include <pthread.h>
 #include <fcntl.h>
 #include <sys/mman.h>
+#include <sys/syscall.h>
 #include <semaphore.h>
 #include "bptree.h"
 
-pthread_mutex_t bench_mutex = PTHREAD_MUTEX_INITIALIZER;
-pthread_cond_t bench_cond = PTHREAD_COND_INITIALIZER;
-int ready_threads = 0;
+/* Get gettid has no Glibc wrapper, so we need to
+ * define it as below
+ */
+#define gettid()	syscall(__NR_gettid)
 
 struct key_value {
 	unsigned char len;
@@ -26,14 +28,17 @@ struct bench_option {
 	unsigned int page_bits;
 	int rounds;
 	int read;
-	boolean_t random;
-	boolean_t no_cleanup;
+	bool_t random;
+	bool_t no_cleanup;
 	unsigned int cache_capacity;
 	unsigned int nr_threads;
 	unsigned int nr_processes;
 };
 
-struct shm_bench_kv {
+struct shm_bench_data {
+	unsigned int ready_threads;
+	pthread_mutex_t mutex;
+	pthread_cond_t cond;
 	unsigned int index;
 	unsigned int nr_kvs;
 	struct key_value kvs[0];
@@ -42,11 +47,13 @@ struct shm_bench_kv {
 struct thread_info {
 	pthread_t thread;
 	bptree_t bpt;
-	struct shm_bench_kv *bench_kv;
+	sem_t *sem;
+	struct shm_bench_data *bench_data;
 };
 
 static void usage();
 static void print_seperator();
+static void do_bench(bptree_t h, struct shm_bench_data *bench_data);
 
 struct bench_option opts = {
 	12,	// page_bits
@@ -101,61 +108,54 @@ static void dump_bpt_iostat(struct bpt_iostat *iostat)
 static void *benchmark_thread(void *arg)
 {
 	int rc;
-	int i;
 	struct thread_info *ti;
-	struct shm_bench_kv *bench_kv;
-	struct key_value *kv;
+	struct shm_bench_data *bench_data;
 
 	ti = (struct thread_info *)arg;
-	bench_kv = ti->bench_kv;
+	bench_data = ti->bench_data;
 	
 	/* Mutex unlocked if condition signaled */
-	rc = pthread_mutex_lock(&bench_mutex);
+	rc = pthread_mutex_lock(&bench_data->mutex);
 	if (rc != 0) {
+		fprintf(stderr, "Failed to lock mutex, error:%d\n", rc);
 		goto out;
 	}
 
-	printf("benchmark_thread started!\n");
-
-	__sync_add_and_fetch(&ready_threads, 1);
+	__sync_add_and_fetch(&bench_data->ready_threads, 1);
 	
-	rc = pthread_cond_wait(&bench_cond, &bench_mutex);
+	rc = pthread_cond_wait(&bench_data->cond, &bench_data->mutex);
 	if (rc != 0) {
+		fprintf(stderr, "Failed to wait cond, error:%d\n", rc);
 		goto out;
 	}
 
-	rc = pthread_mutex_unlock(&bench_mutex);
+	rc = pthread_mutex_unlock(&bench_data->mutex);
 	if (rc != 0) {
+		fprintf(stderr, "Failed to unlock mutex, error:%d\n", rc);
 		goto out;
 	}
 
-	while ((i = __sync_add_and_fetch(&bench_kv->index, 1)) <
-	       bench_kv->nr_kvs) {
-		kv = &bench_kv->kvs[i];
-		rc = bpt_insertkey(ti->bpt, (unsigned char *)kv->key,
-				   kv->len, 0, kv->value);
-		if (rc != 0) {
-			fprintf(stderr, "Failed to insert key: %s\n",
-				kv->key);
-			goto out;
-		}
-	}
+	printf("thread:%ld benchmarking started...\n", gettid());
+
+	do_bench(ti->bpt, bench_data);
 
  out:
+	sem_post(ti->sem);
 	return NULL;
 }
 
-static void bench_fill_data(struct shm_bench_kv *bench_kv, int nr_kvs,
-			    boolean_t random)
+static void bench_prefill_data(struct shm_bench_data *bench_data,
+			       int nr_kvs,
+			       bool_t random)
 {
 	int i;
 	
 	/* Key/value prefill */
-	bench_kv->nr_kvs = nr_kvs;
-	for (i = 0; i < bench_kv->nr_kvs; i++) {
-		bench_kv->kvs[i].len = sprintf(bench_kv->kvs[i].key,
-					       "benchmark_%08d", i);
-		bench_kv->kvs[i].value = i;
+	bench_data->nr_kvs = nr_kvs;
+	for (i = 0; i < bench_data->nr_kvs; i++) {
+		bench_data->kvs[i].len = sprintf(bench_data->kvs[i].key,
+						 "benchmark_%08d", i);
+		bench_data->kvs[i].value = i;
 	}
 
 	if (random) {
@@ -169,27 +169,46 @@ static void bench_fill_data(struct shm_bench_kv *bench_kv, int nr_kvs,
 		do {
 			i = rand() % nr_kvs;
 			j = rand() % nr_kvs;
-			temp = bench_kv->kvs[i];
-			bench_kv->kvs[i] = bench_kv->kvs[j];
-			bench_kv->kvs[j] = temp;
+			temp = bench_data->kvs[i];
+			bench_data->kvs[i] = bench_data->kvs[j];
+			bench_data->kvs[j] = temp;
 			x++;
 		} while(x < (nr_kvs / 2));
 	}
 }
 
-static void bench_cleanup_data(bptree_t h, struct shm_bench_kv *bench_kv)
+static void bench_cleanup_data(bptree_t h,
+			       struct shm_bench_data *bench_data)
 {
 	int rc;
 	struct key_value *kv = NULL;
 	int i;
 	
-	for (i = 0; i < bench_kv->nr_kvs; i++) {
-		kv = &bench_kv->kvs[i];
+	for (i = 0; i < bench_data->nr_kvs; i++) {
+		kv = &bench_data->kvs[i];
 		rc = bpt_deletekey(h, (unsigned char *)kv->key,
 				   kv->len, 0);
 		if (rc != 0) {
 			fprintf(stderr, "Failed to delete key: %s\n",
 				kv->key);
+		}
+	}
+}
+
+static void do_bench(bptree_t h, struct shm_bench_data *bench_data)
+{
+	int rc;
+	unsigned int i;
+	
+	while ((i = __sync_add_and_fetch(&bench_data->index, 1)) <
+	       bench_data->nr_kvs) {
+		rc = bpt_insertkey(h, (unsigned char *)bench_data->kvs[i].key,
+				   bench_data->kvs[i].len, 0,
+				   bench_data->kvs[i].value);
+		if (rc != 0) {
+			fprintf(stderr, "Failed to insert key: %s\n",
+				bench_data->kvs[i].key);
+			break;
 		}
 	}
 }
@@ -203,7 +222,7 @@ int main(int argc, char *argv[])
 	int i;
 	struct timespec start, end;
 	double t;
-	struct shm_bench_kv *bench_kv = MAP_FAILED;
+	struct shm_bench_data *bench_data = MAP_FAILED;
 	struct thread_info *ti = NULL;
 	size_t shm_size = 0;
 	int shmfd = -1;
@@ -211,7 +230,9 @@ int main(int argc, char *argv[])
 	pid_t pid = -1;
 	const char *bench_sem_name = "/bpt-bench";
 	sem_t *bench_sem = SEM_FAILED;
-	boolean_t is_parent = TRUE;
+	pthread_mutexattr_t mutex_attr;
+	pthread_condattr_t cond_attr;
+	bool_t is_parent = TRUE;
 
 	while ((ch = getopt(argc, argv, "p:n:o:rc:t:P:Ch")) != -1) {
 		switch (ch) {
@@ -275,7 +296,7 @@ int main(int argc, char *argv[])
 	}
 
 	/* Create shared memory for kvs used for benchmarking */
-	shm_size = offsetof(struct shm_bench_kv, kvs) +
+	shm_size = offsetof(struct shm_bench_data, kvs) +
 		opts.rounds * sizeof(struct key_value);
 
 	shmfd = shm_open(shm_name, O_RDWR|O_CREAT|O_EXCL, 0666);
@@ -290,15 +311,27 @@ int main(int argc, char *argv[])
 		goto out;
 	}
 
-	bench_kv = mmap(NULL, shm_size, PROT_READ | PROT_WRITE,
-			MAP_SHARED, shmfd, 0);
-	if (bench_kv == MAP_FAILED) {
+	bench_data = mmap(NULL, shm_size, PROT_READ | PROT_WRITE,
+			  MAP_SHARED, shmfd, 0);
+	if (bench_data == MAP_FAILED) {
 		vperror("mmap failed!");
 		goto out;
 	}
-	memset(bench_kv, 0, shm_size);
+	memset(bench_data, 0, shm_size);
 
-	bench_fill_data(bench_kv, opts.rounds, opts.random);
+	/* Initialize mutex and cond to be shared between processes */
+	pthread_mutexattr_init(&mutex_attr);
+	pthread_mutexattr_setpshared(&mutex_attr, PTHREAD_PROCESS_SHARED);
+	pthread_mutex_init(&bench_data->mutex, &mutex_attr);
+	pthread_mutexattr_destroy(&mutex_attr);
+	
+	pthread_condattr_init(&cond_attr);
+	pthread_condattr_setpshared(&cond_attr, PTHREAD_PROCESS_SHARED);
+	pthread_cond_init(&bench_data->cond, &cond_attr);
+	pthread_condattr_destroy(&cond_attr);
+
+	/* Prefill test key values */
+	bench_prefill_data(bench_data, opts.rounds, opts.random);
 
 	/* Create/Open b+tree */
 	h = bpt_open("bpt.dat", opts.page_bits, opts.cache_capacity);
@@ -333,8 +366,8 @@ int main(int argc, char *argv[])
 			printf("forked process %d!\n", pid);
 		}
 	}
-		
-	/* Create threads if necessary */
+
+	/* Create threads if we need more than 1 thread */
 	if (opts.nr_threads > 1) {
 		/* Allocate thread info */
 		ti = (struct thread_info *)malloc(opts.nr_threads * sizeof(*ti));
@@ -346,9 +379,10 @@ int main(int argc, char *argv[])
 		memset(ti, 0, opts.nr_threads * sizeof(*ti));
 		
 		/* Create threads */
-		for (i = 0; i < opts.nr_threads; i++) {
+		for (i = 0; i < (opts.nr_threads - 1); i++) {
 			ti[i].bpt = h;
-			ti[i].bench_kv = bench_kv;
+			ti[i].sem = bench_sem;
+			ti[i].bench_data = bench_data;
 			rc = pthread_create(&ti[i].thread, NULL,
 					    benchmark_thread,
 					    &ti[i]);
@@ -357,91 +391,90 @@ int main(int argc, char *argv[])
 				goto out;
 			}
 		}
-		
-		/* Make sure all threads are ready */
-		while (ready_threads < opts.nr_threads) {
+	}
+
+	/* We are parent, wait for all threads get ready */
+	if (is_parent) {
+		while (bench_data->ready_threads <
+		       (opts.nr_processes * opts.nr_threads - 1)) {
 			usleep(10000);
 		}
-	}
-
-	if (is_parent) {
-		/* We are parent process, send signal to child
-		 * processes to start benchmarking. As parent
-		 * don't need to wait, so nr_processes - 1.
-		 */
-		for (i = 0; i < (opts.nr_processes - 1); i++) {
-			sem_post(bench_sem);
-		}
 	} else {
-		/* We are child process, waiting for signal */
-		sem_wait(bench_sem);
+		/* We are child, waiting for signal to start benchmarking */
+		rc = pthread_mutex_lock(&bench_data->mutex);
+		if (rc != 0) {
+			fprintf(stderr, "Failed to lock mutex, error:%d\n", rc);
+			goto out;
+		}
+
+		__sync_add_and_fetch(&bench_data->ready_threads, 1);
+		
+		rc = pthread_cond_wait(&bench_data->cond, &bench_data->mutex);
+		if (rc != 0) {
+			fprintf(stderr, "Failed to wait cond, error:%d\n", rc);
+			goto out;
+		}
+
+		rc = pthread_mutex_unlock(&bench_data->mutex);
+		if (rc != 0) {
+			fprintf(stderr, "Failed to unlock mutex, error:%d\n", rc);
+			goto out;
+		}
 	}
 
-	printf("process %d start benchmarking...\n", getpid());
+	printf("thread:%ld benchmarking started...\n", gettid());
 	
 	clock_gettime(CLOCK_REALTIME, &start);
 	
-	/* Start bench */
-	if (opts.nr_threads > 1) {// Multi-thread bench
-		printf("Multi-thread bench not supported yet. Comming soon!\n");
-		goto out;
-		
-		rc = pthread_mutex_lock(&bench_mutex);
+	if (is_parent) {
+		/* Notify all threads to start benchmarking. */
+		rc = pthread_mutex_lock(&bench_data->mutex);
 		if (rc != 0) {
 			fprintf(stderr, "Failed to lock bench mutex!\n");
 			goto out;
 		}
-		
-		rc = pthread_cond_broadcast(&bench_cond);
+
+		rc = pthread_cond_broadcast(&bench_data->cond);
 		if (rc != 0) {
 			fprintf(stderr, "Failed to broadcast bench condition!\n");
 			goto out;
 		}
 
-		rc = pthread_mutex_unlock(&bench_mutex);
+		rc = pthread_mutex_unlock(&bench_data->mutex);
 		if (rc != 0) {
 			fprintf(stderr, "Failed to unlock bench mutex!\n");
 			goto out;
 		}
+	}
 
-		for (i = 0; i < opts.nr_threads; i++) {
+	do_bench(h, bench_data);
+
+	if (is_parent) {
+		for (i = 0; i < (opts.nr_processes * opts.nr_threads - 1); i++) {
+			sem_wait(bench_sem);
+		}
+		printf("thread:%ld benchmarking done...\n", gettid());
+	} else {
+		sem_post(bench_sem);
+		printf("thread:%ld benchmarking done...\n", gettid());
+	}
+
+	clock_gettime(CLOCK_REALTIME, &end);
+	
+	if (opts.nr_threads > 1) { // Multi-thread bench
+		for (i = 0; i < (opts.nr_threads - 1); i++) {
 			rc = pthread_join(ti[i].thread, NULL);
 			if (rc != 0) {
 				fprintf(stderr, "Failed to join thread %d\n", i);
 				goto out;
 			}
 		}
-	} else { // Single thread bench
-		while ((i = __sync_add_and_fetch(&bench_kv->index, 1)) <
-		       bench_kv->nr_kvs) {
-			rc = bpt_insertkey(h, (unsigned char *)bench_kv->kvs[i].key,
-					   bench_kv->kvs[i].len, 0,
-					   bench_kv->kvs[i].value);
-			if (rc != 0) {
-				fprintf(stderr, "Failed to insert key: %s\n",
-					bench_kv->kvs[i].key);
-				goto out;
-			}
-		}
+		printf("process %d benchmarking done!\n", getpid());
 	}
-
-	if ((opts.nr_processes > 1) && is_parent) {
-		for (i = 0; i < (opts.nr_processes - 1); i++) {
-			sem_wait(bench_sem);
-		}
-	} else if ((opts.nr_processes > 1) && !is_parent) {
-		sem_post(bench_sem);
-	}
-
-	clock_gettime(CLOCK_REALTIME, &end);
-	
-	printf("process %d benchmarking done!\n", getpid());
 
 	bpt_getiostat(h, &iostat);
 
-	/* If there is only 1 process or we are the parent process then
-	 * print the benchmark summary
-	 */
+	/* Only print bench summary in parent process */
 	if (is_parent) {
 		t = ((end.tv_sec - start.tv_sec) * 1e9 +
 		     (end.tv_nsec - start.tv_nsec)) / 1e9;
@@ -455,7 +488,7 @@ int main(int argc, char *argv[])
 		dump_bpt_iostat(&iostat);
 
 		if (!opts.no_cleanup) {
-			bench_cleanup_data(h, bench_kv);
+			bench_cleanup_data(h, bench_data);
 		}
 	}
 
@@ -470,8 +503,8 @@ int main(int argc, char *argv[])
 		}
 	}
 	if (shmfd) {
-		if (bench_kv != MAP_FAILED) {
-			munmap(bench_kv, shm_size);
+		if (bench_data != MAP_FAILED) {
+			munmap(bench_data, shm_size);
 		}
 		close(shmfd);
 		if (is_parent) {

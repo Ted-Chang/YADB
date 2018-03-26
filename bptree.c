@@ -77,7 +77,20 @@ struct bpt_key {
 #define slotptr(page, slot) (((struct bpt_slot *)(page+1)) + (slot-1))
 #define keyptr(page, slot) ((struct bpt_key *)((unsigned char *)(page) + slotptr(page, slot)->offset))
 
-/* Page header */
+/* Page header
+ * bptree page layout
+ * +-------------+      -
+ * | page header |      ^
+ * +-------------+      |
+ * |  bpt slots -+--+   |
+ * |     ...     |  |   |
+ * +-------------+  |  page size
+ * | free space  |  |   |
+ * +-------------+  |   |
+ * |  bpt keys   |  |   |
+ * |     ...     |<-+   v
+ * +-------------+      -
+ */
 struct bpt_page {
 	unsigned int count;	// number of keys in page
 	unsigned int active;	// number of active keys
@@ -248,12 +261,17 @@ int bpt_unlockpage(struct bptree *bpt, bpt_pageno_t page_no,
  * +------------------------+
  * |      Super block       |
  * +------------------------+
- * |       root page        |
- * +------------------------+
- * |         ......         |
- * +------------------------+
- * |       leaf pages       |
- * +------------------------+
+ * |      alloc page[0]   --+--+
+ * |      alloc page[1]   --+--+---+
+ * +------------------------+  |   |
+ * |       root page        |  |   |page free list
+ * +------------------------+  |   |
+ * |          ...           |<-+---+
+ * +------------------------+  |
+ * |       leaf pages       |  |
+ * +------------------------+  |always point to last+1 page
+ *                       ^     |
+ *                       +-----+
  */
 bptree_t bpt_open(const char *name, unsigned int page_bits,
 		  unsigned int entry_max)
@@ -716,7 +734,7 @@ int bpt_mappage(struct bptree *bpt, struct bpt_page **page,
 bpt_pageno_t bpt_newpage(struct bptree *bpt, struct bpt_page *page)
 {
 	bpt_pageno_t new_page = 0;
-	boolean_t reuse = 0;
+	bool_t reuse = 0;
 
 	/* Lock allocation page */
 	if (bpt_lockpage(bpt, PAGE_ALLOC, BPT_LOCK_WRITE)) {
@@ -1473,9 +1491,9 @@ int bpt_deletekey(bptree_t h, unsigned char *key,
 	unsigned int slot;
 	unsigned int i;
 	bpt_pageno_t right, page_no;
-	boolean_t fence = FALSE;
-	boolean_t found = FALSE;
-	boolean_t dirty = FALSE;
+	bool_t fence = FALSE;
+	bool_t found = FALSE;
+	bool_t dirty = FALSE;
 	unsigned char lowerkey[257];
 	unsigned char higherkey[257];
 
