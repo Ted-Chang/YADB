@@ -12,11 +12,7 @@
 #include <sys/syscall.h>
 #include <semaphore.h>
 #include "bptree.h"
-
-/* Get gettid has no Glibc wrapper, so we need to
- * define it as below
- */
-#define gettid()	syscall(__NR_gettid)
+#include "bptdef.h"
 
 struct key_value {
 	unsigned char len;
@@ -218,6 +214,7 @@ int main(int argc, char *argv[])
 	int rc = 0;
 	int ch = 0;
 	bptree_t h = NULL;
+	struct bpt_mgr *mgr = NULL;
 	struct bpt_iostat iostat;
 	int i;
 	struct timespec start, end;
@@ -334,7 +331,7 @@ int main(int argc, char *argv[])
 	bench_prefill_data(bench_data, opts.rounds, opts.random);
 
 	/* Create/Open b+tree */
-	h = bpt_open("bpt.dat", opts.page_bits, opts.cache_capacity);
+	h = bpt_open(mgr);
 	if (h == NULL) {
 		fprintf(stderr, "Failed to create/open bplustree!\n");
 		goto out;
@@ -424,7 +421,7 @@ int main(int argc, char *argv[])
 
 	printf("thread:%ld benchmarking started...\n", gettid());
 	
-	clock_gettime(CLOCK_REALTIME, &start);
+	clock_gettime(CLOCK_MONOTONIC, &start);
 	
 	if (is_parent) {
 		/* Notify all threads to start benchmarking. */
@@ -459,7 +456,7 @@ int main(int argc, char *argv[])
 		printf("thread:%ld benchmarking done...\n", gettid());
 	}
 
-	clock_gettime(CLOCK_REALTIME, &end);
+	clock_gettime(CLOCK_MONOTONIC, &end);
 	
 	if (opts.nr_threads > 1) { // Multi-thread bench
 		for (i = 0; i < (opts.nr_threads - 1); i++) {
@@ -476,8 +473,7 @@ int main(int argc, char *argv[])
 
 	/* Only print bench summary in parent process */
 	if (is_parent) {
-		t = ((end.tv_sec - start.tv_sec) * 1e9 +
-		     (end.tv_nsec - start.tv_nsec)) / 1e9;
+		t = ((end.tv_sec - start.tv_sec) * 1e9 + (end.tv_nsec - start.tv_nsec)) / 1e9;
 		
 		printf("Bench summary: \n");
 		print_seperator();

@@ -1,21 +1,9 @@
 #ifndef __BPTREE_H__
 #define __BPTREE_H__
 
-#ifndef TRUE
-#define TRUE	1
-#endif
+#include "bpttypes.h"
 
-#ifndef FALSE
-#define FALSE	0
-#endif
-
-#ifndef BOOL
-typedef unsigned char bool_t;
-#endif	/* BOOL */
-
-typedef void * bptree_t;
-typedef unsigned char bpt_level;
-typedef unsigned long long bpt_pageno_t;
+struct bpt_mgr;
 
 struct bpt_iostat {
 	volatile unsigned long long reads;
@@ -25,14 +13,13 @@ struct bpt_iostat {
 	volatile unsigned long long cache_retire;
 };
 
-extern bptree_t bpt_open(const char *name, unsigned int page_bits,
-			   unsigned int entry_max);
+extern bptree_t bpt_open(struct bpt_mgr *mgr);
 extern void bpt_close(bptree_t h);
 extern int bpt_insertkey(bptree_t h, unsigned char *key,
-			 unsigned int len, bpt_level level,
-			 bpt_pageno_t page_no);
+			 unsigned int len, bpt_level_t level,
+			 pageno_t page_no);
 extern int bpt_deletekey(bptree_t h, unsigned char *key,
-			 unsigned int len, bpt_level level);
+			 unsigned int len, bpt_level_t level);
 extern unsigned int bpt_firstkey(bptree_t h, unsigned char *key,
 				 unsigned int len);
 extern unsigned int bpt_nextkey(bptree_t h, unsigned int slot);
