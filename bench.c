@@ -42,7 +42,7 @@ struct shm_bench_data {
 
 struct thread_info {
 	pthread_t thread;
-	bptree_t bpt;
+	struct bpt_mgr *mgr;
 	sem_t *sem;
 	struct shm_bench_data *bench_data;
 };
@@ -106,10 +106,18 @@ static void *benchmark_thread(void *arg)
 	int rc;
 	struct thread_info *ti;
 	struct shm_bench_data *bench_data;
+	bptree_t h;
 
 	ti = (struct thread_info *)arg;
 	bench_data = ti->bench_data;
-	
+
+	/* Open a b+tree handle from manager */
+	h = bpt_open(ti->mgr);
+	if (h == NULL) {
+		fprintf(stderr, "Failed to create/open bplustree!\n");
+		goto out;
+	}
+
 	/* Mutex unlocked if condition signaled */
 	rc = pthread_mutex_lock(&bench_data->mutex);
 	if (rc != 0) {
@@ -133,10 +141,13 @@ static void *benchmark_thread(void *arg)
 
 	printf("thread:%ld benchmarking started...\n", gettid());
 
-	do_bench(ti->bpt, bench_data);
+	do_bench(h, bench_data);
 
  out:
 	sem_post(ti->sem);
+	if (h) {
+		bpt_close(h);
+	}
 	return NULL;
 }
 
@@ -270,9 +281,6 @@ int main(int argc, char *argv[])
 			if (opts.nr_threads == 0) {
 				fprintf(stderr, "threads number must greater than 0\n");
 				goto out;
-			} else {
-				printf("multi-thread test is not ready yet...\n");
-				goto out;
 			}
 			break;
 		case 'P':
@@ -331,12 +339,19 @@ int main(int argc, char *argv[])
 	bench_prefill_data(bench_data, opts.rounds, opts.random);
 
 	/* Create/Open b+tree */
-	h = bpt_open(mgr);
-	if (h == NULL) {
-		fprintf(stderr, "Failed to create/open bplustree!\n");
+	mgr = bpt_openmgr("bptbench.dat", opts.page_bits, 128, 13);
+	if (mgr == NULL) {
+		fprintf(stderr, "Failed to open/create b+tree manager!\n");
 		goto out;
 	}
 
+	/* Open b+tree handle from manager */
+	h = bpt_open(mgr);
+	if (h == NULL) {
+		fprintf(stderr, "Failed to open/create b+tree!\n");
+		goto out;
+	}
+	
 	/* Open semaphore for inter-process coordination */
 	bench_sem = sem_open(bench_sem_name, O_RDWR|O_CREAT|O_EXCL,
 			     0666, 0);
@@ -377,7 +392,7 @@ int main(int argc, char *argv[])
 		
 		/* Create threads */
 		for (i = 0; i < (opts.nr_threads - 1); i++) {
-			ti[i].bpt = h;
+			ti[i].mgr = mgr;
 			ti[i].sem = bench_sem;
 			ti[i].bench_data = bench_data;
 			rc = pthread_create(&ti[i].thread, NULL,
@@ -509,6 +524,9 @@ int main(int argc, char *argv[])
 	}
 	if (h) {
 		bpt_close(h);
+	}
+	if (mgr) {
+		bpt_closemgr(mgr);
 	}
 	return rc;
 }

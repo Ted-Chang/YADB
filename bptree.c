@@ -7,188 +7,8 @@
 #include <assert.h>
 #include "bptree.h"
 #include "bptdef.h"
-#include "lock.h"
+#include "bpt_private.h"
 #include "log.h"
-
-#define PAGE_SUPER	0	// page 0 is always reserved for super block
-#define PAGE_ALLOC	1	// alloc page is the head of free page list
-#define PAGE_ROOT	2	// root is always located at page 2
-#define PAGE_LEAF	3	// the first leaf page of level zero is always located at page 2
-#define PAGE_LATCH	4	// page for latch manager
-
-#define BPT_BUF_PAGES	3
-
-#define BPT_LATCH_TABLE	128	// number of latch manager slots
-
-#define PAGE_NUM_BYTES	6	// maximum addressable space is 6-bytes integer * max-page-size
-
-/* stopper key is 2 bytes, plus 1 byte for key length, so 3 bytes */
-#define STOPPER_KEY_LEN	3
-
-/* minimum level of a new b+tree */
-#define MIN_LEVEL	2
-
-struct bpt_super_block {
-	char magic[16];
-	unsigned int major;
-	unsigned int minor;
-	unsigned int page_bits;
-};
-
-typedef enum {
-	BPT_LOCK_ACCESS,
-	BPT_LOCK_DELETE,
-	BPT_LOCK_READ,
-	BPT_LOCK_WRITE,
-	BPT_LOCK_PARENT
-} bpt_mode_t;
-
-struct bpt_slot {
-	unsigned int offset:BPT_MAX_PAGE_SHIFT;	// Page offset for the key start
-	unsigned int dead:1;	// Set for deleted key
-	unsigned int reserved:17;
-	unsigned char page_no[PAGE_NUM_BYTES]; // Child page associated with slot
-};
-
-struct bpt_key {
-	unsigned char len;
-	unsigned char key[0];
-};
-
-/* Macros to address slot and keys within the page.
- * Page slots index beginning from 1.
- */
-#define slotptr(page, slot) (((struct bpt_slot *)(page+1)) + (slot-1))
-#define keyptr(page, slot) ((struct bpt_key *)((char *)(page) + slotptr(page, slot)->offset))
-
-/* b+tree page latch set */
-struct bpt_latch {
-	struct rwlock rdwr;	// read/write access lock
-	struct rwlock parent;	// parent update lock
-	struct rwlock access;	// access intent/page delete
-	struct spin_rwlock busy;
-	volatile unsigned short prev;	// prev entry in hash table chain
-	volatile unsigned short next;	// next entry in hash table chain
-	volatile unsigned short pin;	// number of outstanding locks
-	volatile unsigned short hashv;	// hash value
-	volatile pageno_t page_no;	// latch page number
-};
-
-struct hash_entry {
-	struct spin_rwlock lock;
-	/* latch table entry at the head of chain */
-	volatile unsigned short slot;
-};
-
-/* b+tree page layout
- * +---------------------+      -
- * |     page header     |      ^
- * |              +------+      |
- * |              |right-+------+--------->next sibling
- * +--------------+------+      |
- * |       slots.offset--+--+   |
- * |       slots.page_no-+--+---+--------->child
- * |       ...           |  |   |
- * +---------------------+  |  page size
- * |     free space      |  |   |
- * +---------------------+  |   |
- * |      bpt keys       |  |   |
- * |       ...           |<-+   v
- * +---------------------+      -
- */
-struct bpt_page {
-	unsigned int count;	// number of keys in page
-	unsigned int active;	// number of active keys
-	unsigned int min;	// next key offset
-	unsigned char free:1;	// page is on free list
-	unsigned char kill:1;	// page is being deleted
-	unsigned char dirty:1;	// page is dirty
-	unsigned char reserved:5;
-	bpt_level_t level;	// page level in the tree
-	unsigned char right[PAGE_NUM_BYTES]; // Next page number
-};
-
-struct bpt_pool {
-	pageno_t basepage;	// mapped base pageno
-	char *map;		// mapped memory pointer
-	unsigned short slot;
-	unsigned short pin;	// mapped page pin counter
-	struct bpt_pool *hash_prev;
-	struct bpt_pool *hash_next;
-};
-
-#define CLOCK_BIT	0x8000	// Bit for pool->pin
-
-struct bpt_page_set {
-	pageno_t page_no;
-	struct bpt_page *page;
-	struct bpt_pool *pool;
-	struct bpt_latch *latch;
-};
-
-/* b+tree latch manager
- * +-----------------------+  -
- * |        alloc[1]       |  ^
- * |        alloc[2]       |  |
- * |          ...          |  |
- * +-------+-------+-------+ page size
- * | lock  |  ...  | lock  |  |
- * | slot  |       | slot  |  v
- * +-------+-------+-------+  -
- */
-struct bpt_latch_mgr {
-	struct bpt_page alloc[2];
-	struct spin_rwlock lock;
-	unsigned short latch_deployed;
-	unsigned short nr_latch_pages;
-	unsigned short nr_latch_total;
-	unsigned short victim;
-	unsigned short nr_buckets;
-	struct hash_entry buckets[0];
-};
-
-struct bpt_mgr {
-	unsigned int page_size;
-	unsigned int page_bits;
-	unsigned int seg_bits;	// segment size in pages in bits
-	int fd;			// index file descriptor
-
-	int pool_cnt;		// current number of page pool
-	int pool_max;		// maximum number of page pool
-	int pool_mask;		// number of pages in segments - 1
-	int hash_size;		// hash bucket size
-
-	/* last evicted pool table slot */
-	volatile unsigned int evicted;
-	unsigned short *pool_bkts;// hash table for page segments pool
-
-	/* latch for hash table slots */
-	struct spin_rwlock *pool_bkt_locks;
-	
-	/* mapped latch page from allocation page */
-	struct bpt_latch_mgr *latchmgr;
-
-	/* mapped latch set from latch pages */
-	struct bpt_latch *latches;
-
-	struct bpt_pool *pool;	// page segments pool
-};
-
-/* b+tree handle */
-struct bptree {
-	struct bpt_mgr *mgr;	// b+tree manager
-	int errno;		// errno of last operation
-	pageno_t cursor_page;	// current cursor page number
-	struct bpt_page *cursor;// cached frame for first/next
-	struct bpt_page *frame;	// spare frame for page split
-	struct bpt_page *zero;	// zeros frame buffer (never mapped)
-	unsigned char *mem;
-
-	/* deletekey returns OK even when the key does not exist.
-	 * This is used to indicate whether the key was found in tree.
-	 */
-	int found;
-};
 
 static void bpt_putpageno(unsigned char *dst, pageno_t page_no)
 {
@@ -260,17 +80,17 @@ int bpt_mapsegment(struct bptree *bpt, struct bpt_pool *pool,
 	off_t offset;
 	int flags;
 
-	bpt->errno = 0;
+	bpt->status = 0;
 	offset = (page_no & ~bpt->mgr->pool_mask) << bpt->mgr->page_bits;
 
 	flags = PROT_READ | PROT_WRITE;
 	pool->map = mmap(NULL, (bpt->mgr->pool_mask + 1) << bpt->mgr->page_bits,
 			 flags, MAP_SHARED, bpt->mgr->fd, offset);
 	if (pool->map == MAP_FAILED) {
-		bpt->errno = -1;
+		bpt->status = -1;
 	}
 
-	return bpt->errno;
+	return bpt->status;
 }
 
 void bpt_latchlink(struct bptree *bpt, unsigned short hash_val,
@@ -670,7 +490,7 @@ struct bpt_mgr *bpt_openmgr(const char *name,
 	struct bpt_super_block *sb = NULL;
 	struct bpt_key *key = NULL;
 	struct bpt_slot *sptr = NULL;
-	size_t fsize;
+	off_t fsize;
 	unsigned int cache_blk;
 	unsigned int last;
 	unsigned int latch_per_page;
@@ -719,6 +539,7 @@ struct bpt_mgr *bpt_openmgr(const char *name,
 		rc = -1;
 		goto out;
 	}
+	bpt_bzero(latchmgr, BPT_MAX_PAGE_SIZE);
 
 	/* Read minimum page size to get super block info */
 	if ((fsize = lseek(mgr->fd, 0, SEEK_END)) >= BPT_MIN_PAGE_SIZE) {
@@ -990,7 +811,7 @@ pageno_t bpt_newpage(struct bptree *bpt, struct bpt_page *page)
 		if (bytes < mgr->page_size) {
 			LOG(ERR, "page(0x%llx) pwrite failed\n", new_page);
 			new_page = 0;
-			bpt->errno = -1;
+			bpt->status = -1;
 			goto out;
 		}
 	}
@@ -1024,7 +845,7 @@ int bpt_freepage(struct bptree *bpt, struct bpt_page_set *set)
 
 	LOG(DBG, "page(0x%llx) freed\n", set->page_no);
 
-	return bpt->errno;
+	return bpt->status;
 }
 
 unsigned int bpt_findslot(struct bpt_page_set *set, unsigned char *key,
@@ -1104,7 +925,7 @@ unsigned int bpt_loadpage(struct bptree *bpt,
 		bpt_lockpage(set->latch, mode);
 
 		if (set->page->free) {
-			bpt->errno = -1;
+			bpt->status = -1;
 			goto out;
 		}
 
@@ -1119,7 +940,7 @@ unsigned int bpt_loadpage(struct bptree *bpt,
 			if (set->page_no != PAGE_ROOT) {
 				LOG(ERR, "page(0x%llx) illegal lvl(%d), drill(%d)\n",
 				    set->page_no, set->page->level, drill);
-				bpt->errno = -1;
+				bpt->status = -1;
 				goto out;
 			}
 
@@ -1178,7 +999,7 @@ unsigned int bpt_loadpage(struct bptree *bpt,
 	} while (page_no);
 
 	LOG(ERR, "Key not found\n");
-	bpt->errno = -1;
+	bpt->status = -1;
  out:
 	return 0;
 }
@@ -1295,7 +1116,7 @@ int bpt_splitroot(struct bptree *bpt, struct bpt_page_set *root,
 	LOG(DBG, "root splitted, page_no2(0x%llx)\n", page_no2);
 
  out:
-	return bpt->errno;
+	return bpt->status;
 }
 
 int bpt_splitpage(struct bptree *bpt, struct bpt_page_set *set)
@@ -1311,6 +1132,7 @@ int bpt_splitpage(struct bptree *bpt, struct bpt_page_set *set)
 	unsigned char fencekey[257];
 	unsigned char rightkey[257];
 
+	key = NULL;
 	mgr = bpt->mgr;
 	level = set->page->level;
 
@@ -1318,7 +1140,9 @@ int bpt_splitpage(struct bptree *bpt, struct bpt_page_set *set)
 	bpt_bzero(bpt->frame, mgr->page_size);
 	max = set->page->count;
 
-	for (i = max/2 + 1, count = 0, next = mgr->page_size; i <= max; i++) {
+	count = 0;
+	next = mgr->page_size;
+	for (i = max/2 + 1; i <= max; i++) {
 		count++;
 		key = keyptr(set->page, i);
 		next -= (key->len + 1);
@@ -1358,7 +1182,9 @@ int bpt_splitpage(struct bptree *bpt, struct bpt_page_set *set)
 	set->page->dirty = 0;
 	set->page->active = 0;
 
-	for (i = 1, count = 0, next = mgr->page_size; i <= max/2; i++) {
+	count = 0;
+	next = mgr->page_size;
+	for (i = 1; i <= max/2; i++) {
 		count++;
 		key = keyptr(bpt->frame, i);
 		next -= (key->len + 1);
@@ -1412,7 +1238,7 @@ int bpt_splitpage(struct bptree *bpt, struct bpt_page_set *set)
 	    set->page_no, right.page_no);
 
  out:
-	return bpt->errno;
+	return bpt->status;
 }
 
 int bpt_insertkey(bptree_t h, unsigned char *key,
@@ -1434,8 +1260,8 @@ int bpt_insertkey(bptree_t h, unsigned char *key,
 		} else {
 			LOG(ERR, "Failed to load page, level(%d), page(0x%llx)\n",
 			    level, page_no);
-			if (bpt->errno == 0) {
-				bpt->errno = -1;
+			if (bpt->status == 0) {
+				bpt->status = -1;
 			}
 			goto out;
 		}
@@ -1451,7 +1277,7 @@ int bpt_insertkey(bptree_t h, unsigned char *key,
 			bpt_putpageno(slotptr(set.page, slot)->page_no, page_no);
 			LOG(DBG, "Key updated, level(%d), curr-page(0x%llx), "
 			    "page(0x%llx)\n", level, set.page_no, page_no);
-			bpt->errno = 0;
+			bpt->status = 0;
 			goto unlock_page;
 		}
 
@@ -1501,7 +1327,7 @@ int bpt_insertkey(bptree_t h, unsigned char *key,
 	bpt_unpinpool(set.pool);
 
  out:
-	return bpt->errno;
+	return bpt->status;
 }
 
 pageno_t bpt_findkey(bptree_t h, unsigned char *key,
@@ -1566,7 +1392,7 @@ int bpt_fixfence(struct bptree *bpt,
 	bpt_unpinpool(set->pool);
 
  out:
-	return bpt->errno;
+	return bpt->status;
 }
 
 int bpt_collapseroot(struct bptree *bpt, struct bpt_page_set *root)
@@ -1609,7 +1435,7 @@ int bpt_collapseroot(struct bptree *bpt, struct bpt_page_set *root)
 	LOG(DBG, "root collapsed, child(0x%llx) freed\n", child.page_no);
 
  out:
-	return bpt->errno;
+	return bpt->status;
 }
 
 int bpt_deletekey(bptree_t h, unsigned char *key,
@@ -1628,7 +1454,7 @@ int bpt_deletekey(bptree_t h, unsigned char *key,
 	unsigned char higherkey[257];
 
 	bpt = (struct bptree *)h;
-	bpt->errno = 0;
+	bpt->status = 0;
 
 	if ((slot = bpt_loadpage(bpt, &set, key, len, level, BPT_LOCK_WRITE))) {
 		ptr = keyptr(set.page, slot);
@@ -1711,7 +1537,7 @@ int bpt_deletekey(bptree_t h, unsigned char *key,
 
 	if (right.page->kill) {
 		LOG(ERR, "page(0x%llx) killed\n", right.page_no);
-		bpt->errno = -1;
+		bpt->status = -1;
 		goto out;
 	}
 
@@ -1757,7 +1583,7 @@ int bpt_deletekey(bptree_t h, unsigned char *key,
  foundkey:
 	bpt->found = found;
  out:
-	return bpt->errno;
+	return bpt->status;
 }
 
 struct bpt_key *bpt_key(bptree_t h, unsigned int slot)
@@ -1842,7 +1668,7 @@ unsigned int bpt_nextkey(bptree_t h, unsigned int slot)
 		slot = 0;
 	} while (TRUE);
 
-	bpt->errno = 0;
+	bpt->status = 0;
  out:
 	return 0;
 }
@@ -1852,51 +1678,112 @@ void bpt_getiostat(bptree_t h, struct bpt_iostat *iostat)
 	;
 }
 
-#ifdef _BPT_UNITTEST
-
-void dump_key(unsigned char *key, unsigned int len)
+int dump_key(struct bpt_key *k, char *buf, size_t buf_size)
 {
 	unsigned int i;
+	int nchars;
+	int ret;
 
-	for (i = 0; i < len; i++) {
-		printf("%c", key[i]);
+	ret = 0;
+	for (i = 0; i < k->len; i++) {
+		nchars = snprintf(buf, buf_size, "%c", k->key[i]);
+		if (nchars <= 0) {
+			assert(0);
+			return -1;
+		} else {
+			buf += nchars;
+			buf_size -= nchars;
+			ret += nchars;
+		}
 	}
-	printf(" ");
+
+	nchars = snprintf(buf, buf_size, " ");
+	ret += nchars;
+
+	return ret;
 }
 
-void dump_keys_in_page(struct bpt_page *page)
+char *dump_keys_in_page(struct bpt_page *page, char *buf,
+			size_t buf_size)
 {
 	int i;
+	int nchars;
 	struct bpt_key *k;
+	char *temp;
 	unsigned char stopper[] = {0xFF, 0xFF};
-	
+
+	temp = buf;
 	for (i = 1; i <= page->count; i++) {
+		/* Prepend a '*' before dead keys */
 		if (slotptr(page, i)->dead) {
-			continue;
+			nchars = snprintf(temp, buf_size, "*");
+			if (nchars <= 0) {
+				assert(0);
+				goto out;
+			} else {
+				temp += nchars;
+				buf_size -= nchars;
+			}
 		}
+
+		/* If this is stopper key, just print a ';' */
 		k = keyptr(page, i);
 		if (keycmp(k, stopper, sizeof(stopper)) == 0) {
-			printf(";");
-			continue;
+			nchars = snprintf(temp, buf_size, ";");
+			if (nchars <= 0) {
+				assert(0);
+				goto out;
+			} else {
+				temp += nchars;
+				buf_size -= nchars;
+				continue;
+			}
 		}
-		
-		dump_key(k->key, k->len);
+
+		/* Dump the actual key */
+		nchars = dump_key(k, temp, buf_size);
+		if (nchars <= 0) {
+			assert(0);
+			goto out;
+		}
+
+		temp += nchars;
+		buf_size -= nchars;
 	}
+
+ out:
+	return buf;
 }
 
-void dump_page(struct bpt_page *page)
+void dump_bpt_page(struct bpt_page *page, unsigned int page_size)
 {
-	printf("---------- bptree page info -----------\n");
-	printf(" count  : %d\n", page->count);
-	printf(" active : %d\n", page->active);
-	printf(" level  : %d\n", page->level);
-	printf(" min    : %d\n", page->min);
-	printf(" right  : 0x%llx\n", bpt_getpageno(page->right));
-	printf(" keys   : ");
-	dump_keys_in_page(page);
-	printf("\n");
-	printf("------------------------------------------\n");
+	char *key_buf;
+
+	key_buf = malloc(page_size);
+	if (key_buf == NULL) {
+		fprintf(stderr, "malloc buffer for keys failed!\n");
+		return;
+	}
+
+	printf("---------- b+tree page info -----------\n"
+	       " count  : %d\n"
+	       " active : %d\n"
+	       " level  : %d\n"
+	       " min    : %d\n"
+	       " free   : %d\n"
+	       " kill   : %d\n"
+	       " dirty  : %d\n"
+	       " right  : 0x%llx\n"
+	       " keys   : %s\n"
+	       "---------------------------------------\n",
+	       page->count, page->active, page->level, page->min,
+	       page->free, page->kill, page->dirty, bpt_getpageno(page->right),
+	       dump_keys_in_page(page, key_buf, page_size));
+
+	free(key_buf);
 }
+
+#ifdef _BPT_UNITTEST
 
 int main(int argc, char *argv[])
 {
@@ -2005,18 +1892,6 @@ int main(int argc, char *argv[])
 		fprintf(stderr, "Failed to iterate key: %s\n", key);
 		goto out;
 	}
-
-	i = 0;
-	do {
-		k = bpt_key(bpt, slot);
-		dump_key(k->key, k->len);
-		
-		if (++i > 20) {
-			printf("\n");
-			break;
-		}
-		slot = bpt_nextkey(bpt, slot);
-	} while(slot);
 
 	for (i = 511; i >= 0; i--) {
 		ret = sprintf(key, "%08x", i);
