@@ -11,6 +11,7 @@
 #include <sys/mman.h>
 #include <sys/syscall.h>
 #include <semaphore.h>
+#include <signal.h>
 #include "bptree.h"
 #include "bptdef.h"
 
@@ -62,6 +63,16 @@ struct bench_option opts = {
 	1	// nr_processes
 };
 
+/* Per process global data */
+bool_t is_parent = TRUE;
+int shmfd = -1;
+const char *shm_name = "/bpt_bench";
+size_t shm_size = 0;
+struct shm_bench_data *bench_data = MAP_FAILED;
+const char *bench_sem_name = "/bpt-bench";
+sem_t *bench_sem = SEM_FAILED;
+struct bpt_mgr *mgr = NULL;
+
 static void dump_options(struct bench_option *options)
 {
 	printf("Page bits           : %d\n", options->page_bits);
@@ -91,6 +102,39 @@ static void vperror(const char *fmt, ...)
 	perror(buf);
 }
 
+static void bench_cleanup()
+{
+	if (mgr) {
+		bpt_closemgr(mgr);
+	}
+	if (bench_sem != SEM_FAILED) {
+		sem_close(bench_sem);
+		if (is_parent) {
+			sem_unlink(bench_sem_name);
+		}
+	}
+	if (shmfd) {
+		if (bench_data != MAP_FAILED) {
+			munmap(bench_data, shm_size);
+		}
+		close(shmfd);
+		if (is_parent) {
+			shm_unlink(shm_name);
+		}
+	}
+}
+
+static void bench_sig_handler(const int sig)
+{
+	if ((sig != SIGTERM) && (sig != SIGQUIT) && (sig != SIGINT)) {
+		return;
+	}
+
+	bench_cleanup();
+
+	exit(EXIT_FAILURE);
+}
+
 static void dump_bpt_iostat(struct bpt_iostat *iostat)
 {
 	printf("BPT iostat:\n");
@@ -105,11 +149,11 @@ static void *benchmark_thread(void *arg)
 {
 	int rc;
 	struct thread_info *ti;
-	struct shm_bench_data *bench_data;
+	struct shm_bench_data *sbd;
 	bptree_t h;
 
 	ti = (struct thread_info *)arg;
-	bench_data = ti->bench_data;
+	sbd = ti->bench_data;
 
 	/* Open a b+tree handle from manager */
 	h = bpt_open(ti->mgr);
@@ -119,21 +163,21 @@ static void *benchmark_thread(void *arg)
 	}
 
 	/* Mutex unlocked if condition signaled */
-	rc = pthread_mutex_lock(&bench_data->mutex);
+	rc = pthread_mutex_lock(&sbd->mutex);
 	if (rc != 0) {
 		fprintf(stderr, "Failed to lock mutex, error:%d\n", rc);
 		goto out;
 	}
 
-	__sync_add_and_fetch(&bench_data->ready_threads, 1);
+	__sync_add_and_fetch(&sbd->ready_threads, 1);
 	
-	rc = pthread_cond_wait(&bench_data->cond, &bench_data->mutex);
+	rc = pthread_cond_wait(&sbd->cond, &sbd->mutex);
 	if (rc != 0) {
 		fprintf(stderr, "Failed to wait cond, error:%d\n", rc);
 		goto out;
 	}
 
-	rc = pthread_mutex_unlock(&bench_data->mutex);
+	rc = pthread_mutex_unlock(&sbd->mutex);
 	if (rc != 0) {
 		fprintf(stderr, "Failed to unlock mutex, error:%d\n", rc);
 		goto out;
@@ -141,7 +185,7 @@ static void *benchmark_thread(void *arg)
 
 	printf("thread:%ld benchmarking started...\n", gettid());
 
-	do_bench(h, bench_data);
+	do_bench(h, sbd);
 
  out:
 	sem_post(ti->sem);
@@ -151,18 +195,18 @@ static void *benchmark_thread(void *arg)
 	return NULL;
 }
 
-static void bench_prefill_data(struct shm_bench_data *bench_data,
+static void bench_prefill_data(struct shm_bench_data *sbd,
 			       int nr_kvs,
 			       bool_t random)
 {
 	int i;
 	
 	/* Key/value prefill */
-	bench_data->nr_kvs = nr_kvs;
-	for (i = 0; i < bench_data->nr_kvs; i++) {
-		bench_data->kvs[i].len = sprintf(bench_data->kvs[i].key,
-						 "benchmark_%08d", i);
-		bench_data->kvs[i].value = i;
+	sbd->nr_kvs = nr_kvs;
+	for (i = 0; i < sbd->nr_kvs; i++) {
+		sbd->kvs[i].len = sprintf(sbd->kvs[i].key,
+					  "benchmark_%08d", i);
+		sbd->kvs[i].value = i;
 	}
 
 	if (random) {
@@ -176,23 +220,23 @@ static void bench_prefill_data(struct shm_bench_data *bench_data,
 		do {
 			i = rand() % nr_kvs;
 			j = rand() % nr_kvs;
-			temp = bench_data->kvs[i];
-			bench_data->kvs[i] = bench_data->kvs[j];
-			bench_data->kvs[j] = temp;
+			temp = sbd->kvs[i];
+			sbd->kvs[i] = sbd->kvs[j];
+			sbd->kvs[j] = temp;
 			x++;
 		} while(x < (nr_kvs / 2));
 	}
 }
 
 static void bench_cleanup_data(bptree_t h,
-			       struct shm_bench_data *bench_data)
+			       struct shm_bench_data *sbd)
 {
 	int rc;
 	struct key_value *kv = NULL;
 	int i;
 	
-	for (i = 0; i < bench_data->nr_kvs; i++) {
-		kv = &bench_data->kvs[i];
+	for (i = 0; i < sbd->nr_kvs; i++) {
+		kv = &sbd->kvs[i];
 		rc = bpt_deletekey(h, (unsigned char *)kv->key,
 				   kv->len, 0);
 		if (rc != 0) {
@@ -202,19 +246,19 @@ static void bench_cleanup_data(bptree_t h,
 	}
 }
 
-static void do_bench(bptree_t h, struct shm_bench_data *bench_data)
+static void do_bench(bptree_t h, struct shm_bench_data *sbd)
 {
 	int rc;
 	unsigned int i;
 	
-	while ((i = __sync_add_and_fetch(&bench_data->index, 1)) <
-	       bench_data->nr_kvs) {
-		rc = bpt_insertkey(h, (unsigned char *)bench_data->kvs[i].key,
-				   bench_data->kvs[i].len, 0,
-				   bench_data->kvs[i].value);
+	while ((i = __sync_add_and_fetch(&sbd->index, 1)) <
+	       sbd->nr_kvs) {
+		rc = bpt_insertkey(h, (unsigned char *)sbd->kvs[i].key,
+				   sbd->kvs[i].len, 0,
+				   sbd->kvs[i].value);
 		if (rc != 0) {
 			fprintf(stderr, "Failed to insert key: %s\n",
-				bench_data->kvs[i].key);
+				sbd->kvs[i].key);
 			break;
 		}
 	}
@@ -225,22 +269,14 @@ int main(int argc, char *argv[])
 	int rc = 0;
 	int ch = 0;
 	bptree_t h = NULL;
-	struct bpt_mgr *mgr = NULL;
 	struct bpt_iostat iostat;
 	int i;
 	struct timespec start, end;
 	double t;
-	struct shm_bench_data *bench_data = MAP_FAILED;
 	struct thread_info *ti = NULL;
-	size_t shm_size = 0;
-	int shmfd = -1;
-	const char *shm_name = "/bpt_bench";
 	pid_t pid = -1;
-	const char *bench_sem_name = "/bpt-bench";
-	sem_t *bench_sem = SEM_FAILED;
 	pthread_mutexattr_t mutex_attr;
 	pthread_condattr_t cond_attr;
-	bool_t is_parent = TRUE;
 
 	while ((ch = getopt(argc, argv, "p:n:o:rc:t:P:Ch")) != -1) {
 		switch (ch) {
@@ -298,6 +334,17 @@ int main(int argc, char *argv[])
 			usage();
 			goto out;
 		}
+	}
+
+	/* Register signal handler */
+	if (signal(SIGTERM, bench_sig_handler) == SIG_ERR) {
+		vperror("catch SIGTERM failed!");
+	}
+	if (signal(SIGQUIT, bench_sig_handler) == SIG_ERR) {
+		vperror("catch SIGQUIT failed!");
+	}
+	if (signal(SIGINT, bench_sig_handler) == SIG_ERR) {
+		vperror("catch SIGINT failed!");
 	}
 
 	/* Create shared memory for kvs used for benchmarking */
@@ -507,27 +554,13 @@ int main(int argc, char *argv[])
 	if (ti) {
 		free(ti);
 	}
-	if (bench_sem != SEM_FAILED) {
-		sem_close(bench_sem);
-		if (is_parent) {
-			sem_unlink(bench_sem_name);
-		}
-	}
-	if (shmfd) {
-		if (bench_data != MAP_FAILED) {
-			munmap(bench_data, shm_size);
-		}
-		close(shmfd);
-		if (is_parent) {
-			shm_unlink(shm_name);
-		}
-	}
+
 	if (h) {
 		bpt_close(h);
 	}
-	if (mgr) {
-		bpt_closemgr(mgr);
-	}
+
+	bench_cleanup();
+
 	return rc;
 }
 
