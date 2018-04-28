@@ -769,7 +769,7 @@ pageno_t bpt_newpage(struct bptree *bpt, struct bpt_page *page)
 
 	spin_wrlock(&mgr->latchmgr->lock);
 
-	/* Try empty chain first
+	/* Try page free list first
 	 * otherwise allocate new empty page
 	 */
 	if ((new_page = bpt_getpageno(mgr->latchmgr->alloc[1].right))) {
@@ -1101,7 +1101,7 @@ int bpt_splitroot(struct bptree *bpt, struct bpt_page_set *root,
 	((unsigned char *)root->page)[next+1] = 0xFF;
 	((unsigned char *)root->page)[next+2] = 0xFF;
 	bpt_putpageno(slotptr(root->page, 2)->page_no, page_no2);
-	slotptr(root, 2)->offset = next;
+	slotptr(root->page, 2)->offset = next;
 
 	bpt_putpageno(root->page->right, 0);
 	root->page->min = next;
