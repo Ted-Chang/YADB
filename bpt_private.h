@@ -183,6 +183,4 @@ struct bptree {
 	int found;
 };
 
-extern void dump_bpt_page(struct bpt_page *page, unsigned int page_size);
-
 #endif	/* __BPT_PRIVATE_H__ */

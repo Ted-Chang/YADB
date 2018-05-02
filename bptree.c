@@ -1678,93 +1678,44 @@ void bpt_getiostat(bptree_t h, struct bpt_iostat *iostat)
 	;
 }
 
-int dump_key(struct bpt_key *k, char *buf, size_t buf_size)
+void dump_key(struct bpt_key *k)
 {
 	unsigned int i;
-	int nchars;
-	int ret;
 
-	ret = 0;
 	for (i = 0; i < k->len; i++) {
-		nchars = snprintf(buf, buf_size, "%c", k->key[i]);
-		if (nchars <= 0) {
-			assert(0);
-			return -1;
-		} else {
-			buf += nchars;
-			buf_size -= nchars;
-			ret += nchars;
-		}
+		printf("%c", k->key[i]);
 	}
 
-	nchars = snprintf(buf, buf_size, " ");
-	ret += nchars;
-
-	return ret;
+	printf(" ");
 }
 
-char *dump_keys_in_page(struct bpt_page *page, char *buf,
-			size_t buf_size)
+void dump_keys_in_page(struct bpt_page *page)
 {
 	int i;
-	int nchars;
 	struct bpt_key *k;
-	char *temp;
 	unsigned char stopper[] = {0xFF, 0xFF};
 
-	temp = buf;
 	for (i = 1; i <= page->count; i++) {
 		/* Prepend a '*' before dead keys */
 		if (slotptr(page, i)->dead) {
-			nchars = snprintf(temp, buf_size, "*");
-			if (nchars <= 0) {
-				assert(0);
-				goto out;
-			} else {
-				temp += nchars;
-				buf_size -= nchars;
-			}
+			printf("[*]");
 		}
 
 		/* If this is stopper key, just print a ';' */
 		k = keyptr(page, i);
 		if (keycmp(k, stopper, sizeof(stopper)) == 0) {
-			nchars = snprintf(temp, buf_size, ";");
-			if (nchars <= 0) {
-				assert(0);
-				goto out;
-			} else {
-				temp += nchars;
-				buf_size -= nchars;
-				continue;
-			}
+			printf(";");
+			continue;
 		}
 
 		/* Dump the actual key */
-		nchars = dump_key(k, temp, buf_size);
-		if (nchars <= 0) {
-			assert(0);
-			goto out;
-		}
-
-		temp += nchars;
-		buf_size -= nchars;
+		dump_key(k);
 	}
-
- out:
-	return buf;
+	printf("\n");
 }
 
-void dump_bpt_page(struct bpt_page *page, unsigned int page_size)
+void dump_bpt_page(struct bpt_page *page)
 {
-	char *key_buf;
-
-	key_buf = malloc(page_size);
-	if (key_buf == NULL) {
-		fprintf(stderr, "malloc buffer for keys failed!\n");
-		return;
-	}
-
 	printf("---------- b+tree page info -----------\n"
 	       " count  : %d\n"
 	       " active : %d\n"
@@ -1774,13 +1725,10 @@ void dump_bpt_page(struct bpt_page *page, unsigned int page_size)
 	       " kill   : %d\n"
 	       " dirty  : %d\n"
 	       " right  : 0x%llx\n"
-	       " keys   : %s\n"
-	       "---------------------------------------\n",
+	       " keys   : ",
 	       page->count, page->active, page->level, page->min,
-	       page->free, page->kill, page->dirty, bpt_getpageno(page->right),
-	       dump_keys_in_page(page, key_buf, page_size));
-
-	free(key_buf);
+	       page->free, page->kill, page->dirty, bpt_getpageno(page->right));
+	dump_keys_in_page(page);
 }
 
 #ifdef _BPT_UNITTEST

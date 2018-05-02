@@ -2,7 +2,7 @@
 CFLAGS = -Wall -g -fstack-protector
 CC = gcc
 
-all: bptest bench lktest pgdump
+all: bptest bench lktest
 
 lktest:
 	$(CC) -g -D_LOCK_UNITTEST lock.c -lpthread -o lktest
@@ -13,9 +13,6 @@ bptest:
 bench: bench.o bptree.o lock.o
 	$(CC) $^ -lpthread -lrt -o $@
 
-pgdump: pgdump.o bptree.o lock.o
-	$(CC) $^ -lpthread -lrt -o $@
-
 clean:
-	rm *.o bptest bench lktest pgdump
+	rm *.o bptest bench lktest
 
