@@ -65,7 +65,7 @@ struct bpt_page *bpt_page(struct bptree *bpt, struct bpt_pool *pool,
 	return page;
 }
 
-void bpt_initlatch(struct bpt_latch *latch)
+static void bpt_initlatch(struct bpt_latch *latch)
 {
 	bpt_bzero(latch, sizeof(*latch));
 
@@ -74,8 +74,8 @@ void bpt_initlatch(struct bpt_latch *latch)
 	rwlock_init(&latch->parent);
 }
 
-int bpt_mapsegment(struct bptree *bpt, struct bpt_pool *pool,
-		   pageno_t page_no)
+static int bpt_mapsegment(struct bptree *bpt, struct bpt_pool *pool,
+			  pageno_t page_no)
 {
 	off_t offset;
 	int flags;
@@ -93,8 +93,8 @@ int bpt_mapsegment(struct bptree *bpt, struct bpt_pool *pool,
 	return bpt->status;
 }
 
-void bpt_latchlink(struct bptree *bpt, unsigned short hash_val,
-		   unsigned short victim, pageno_t page_no)
+static void bpt_latchlink(struct bptree *bpt, unsigned short hash_val,
+			  unsigned short victim, pageno_t page_no)
 {
 	struct bpt_latch *latch;
 
@@ -109,7 +109,7 @@ void bpt_latchlink(struct bptree *bpt, unsigned short hash_val,
 	latch->prev = 0;
 }
 
-struct bpt_latch *bpt_pinlatch(struct bptree *bpt, pageno_t page_no)
+static struct bpt_latch *bpt_pinlatch(struct bptree *bpt, pageno_t page_no)
 {
 	struct bpt_latch *latch;
 	struct bpt_mgr *mgr;
@@ -124,10 +124,9 @@ struct bpt_latch *bpt_pinlatch(struct bptree *bpt, pageno_t page_no)
 	hashv = page_no % mgr->latchmgr->nr_buckets;
 	avail = 0;
 
-	/* acquire read lock on hash bucket */
+	/* Try to find the latch table entry and pin it for this page */
 	spin_rdlock(&mgr->latchmgr->buckets[hashv].lock);
 
-	/* Try to find the latch table entry and pin it for this page */
 	if ((slot = mgr->latchmgr->buckets[hashv].slot)) {
 		do {
 			latch = &mgr->latches[slot];
@@ -143,9 +142,13 @@ struct bpt_latch *bpt_pinlatch(struct bptree *bpt, pageno_t page_no)
 	spin_rdunlock(&mgr->latchmgr->buckets[hashv].lock);
 
 	if (slot) {
+		/* Found the latch and pinned it */
 		goto out;
 	}
 
+	/* Latch not found, reacquire write lock as we may allocate a
+	 * new entry from buckets
+	 */
 	spin_wrlock(&mgr->latchmgr->buckets[hashv].lock);
 
 	if ((slot = mgr->latchmgr->buckets[hashv].slot)) {
@@ -170,18 +173,23 @@ struct bpt_latch *bpt_pinlatch(struct bptree *bpt, pageno_t page_no)
 		goto out;
 	}
 
+	/* Entry not found, and no unpinned latch. Allocate a new entry
+	 * if buckets are not full
+	 */
 	victim = __sync_fetch_and_add(&mgr->latchmgr->latch_deployed, 1) + 1;
 	if (victim < mgr->latchmgr->nr_latch_total) {
 		latch = &mgr->latches[victim];
-		__sync_fetch_and_add(&latch->pin, 1);
 		bpt_initlatch(latch);
+		__sync_fetch_and_add(&latch->pin, 1);
 		bpt_latchlink(bpt, hashv, victim, page_no);
 		spin_wrunlock(&mgr->latchmgr->buckets[hashv].lock);
 		goto out;
 	}
 
+	/* Restore latch deployed counter */
 	victim = __sync_fetch_and_add(&mgr->latchmgr->latch_deployed, -1);
 
+	/* Scan all the buckets and try to find a victim to evict */
 	while (TRUE) {
 		victim = __sync_fetch_and_add(&mgr->latchmgr->victim, 1);
 		if ((victim %= mgr->latchmgr->nr_latch_total)) {
@@ -236,13 +244,13 @@ struct bpt_latch *bpt_pinlatch(struct bptree *bpt, pageno_t page_no)
 	return latch;
 }
 
-void bpt_unpinlatch(struct bpt_latch *latch)
+static void bpt_unpinlatch(struct bpt_latch *latch)
 {
 	__sync_fetch_and_add(&latch->pin, -1);
 }
 
-void bpt_linkhash(struct bptree *bpt, struct bpt_pool *pool,
-		  pageno_t page_no, int hash_val)
+static void bpt_linkhash(struct bptree *bpt, struct bpt_pool *pool,
+			 pageno_t page_no, int hash_val)
 {
 	struct bpt_pool *node;
 	unsigned int slot;
@@ -393,7 +401,7 @@ void bpt_unpinpool(struct bpt_pool *pool)
 	__sync_fetch_and_add(&pool->pin, -1);
 }
 
-void bpt_lockpage(struct bpt_latch *latch, bpt_mode_t mode)
+static void bpt_lockpage(struct bpt_latch *latch, bpt_mode_t mode)
 {
 	switch (mode) {
 	case BPT_LOCK_READ:
@@ -416,7 +424,7 @@ void bpt_lockpage(struct bpt_latch *latch, bpt_mode_t mode)
 	}
 }
 
-void bpt_unlockpage(struct bpt_latch *latch, bpt_mode_t mode)
+static void bpt_unlockpage(struct bpt_latch *latch, bpt_mode_t mode)
 {
 	switch (mode) {
 	case BPT_LOCK_READ:
@@ -848,7 +856,8 @@ int bpt_freepage(struct bptree *bpt, struct bpt_page_set *set)
 	return bpt->status;
 }
 
-unsigned int bpt_findslot(struct bpt_page_set *set, unsigned char *key,
+unsigned int bpt_findslot(struct bpt_page_set *set,
+			  unsigned char *key,
 			  unsigned int len)
 {
 	int slot;
