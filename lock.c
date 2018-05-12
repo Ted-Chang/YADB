@@ -186,6 +186,21 @@ static void *lock_test_thread(void *arg)
 	return NULL;
 }
 
+static void lock_basic_test(struct lock_test *test)
+{
+	spin_rdlock(&test->spin);
+	if (spin_trywrlock(&test->spin)) {
+		assert(0);
+	}
+	spin_rdunlock(&test->spin);
+
+	spin_wrlock(&test->spin);
+	if (spin_trywrlock(&test->spin)) {
+		assert(0);
+	}
+	spin_wrunlock(&test->spin);
+}
+
 int main(int argc, char *argv[])
 {
 	int rc = 0;
@@ -194,6 +209,8 @@ int main(int argc, char *argv[])
 
 	rwlock_init(&test.lock);
 	spin_init(&test.spin);
+
+	lock_basic_test(&test);
 
 	test.do_lock_test = TRUE;
 	test.do_spin_test = FALSE;
