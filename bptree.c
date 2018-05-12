@@ -93,7 +93,7 @@ static int bpt_mapsegment(struct bptree *bpt, struct bpt_pool *pool,
 	return bpt->status;
 }
 
-static void bpt_latchlink(struct bptree *bpt, unsigned short hash_val,
+static void bpt_linklatch(struct bptree *bpt, unsigned short hash_val,
 			  unsigned short victim, pageno_t page_no)
 {
 	struct bpt_latch *latch;
@@ -181,7 +181,7 @@ static struct bpt_latch *bpt_pinlatch(struct bptree *bpt, pageno_t page_no)
 		latch = &mgr->latches[victim];
 		bpt_initlatch(latch);
 		__sync_fetch_and_add(&latch->pin, 1);
-		bpt_latchlink(bpt, hashv, victim, page_no);
+		bpt_linklatch(bpt, hashv, victim, page_no);
 		spin_wrunlock(&mgr->latchmgr->buckets[hashv].lock);
 		goto out;
 	}
@@ -232,9 +232,10 @@ static struct bpt_latch *bpt_pinlatch(struct bptree *bpt, pageno_t page_no)
 
 		spin_wrunlock(&mgr->latchmgr->buckets[idx].lock);
 
+		/* Pin it and link to our hash chain */
 		__sync_fetch_and_add(&latch->pin, 1);
+		bpt_linklatch(bpt, hashv, victim, page_no);
 
-		bpt_latchlink(bpt, hashv, victim, page_no);
 		spin_wrunlock(&mgr->latchmgr->buckets[hashv].lock);
 		spin_wrunlock(&latch->busy);
 		goto out;
@@ -249,7 +250,7 @@ static void bpt_unpinlatch(struct bpt_latch *latch)
 	__sync_fetch_and_add(&latch->pin, -1);
 }
 
-static void bpt_linkhash(struct bptree *bpt, struct bpt_pool *pool,
+static void bpt_linkpool(struct bptree *bpt, struct bpt_pool *pool,
 			 pageno_t page_no, int hash_val)
 {
 	struct bpt_pool *node;
@@ -261,7 +262,7 @@ static void bpt_linkhash(struct bptree *bpt, struct bpt_pool *pool,
 
 	slot = bpt->mgr->pool_bkts[hash_val];
 	if (slot) {
-		node = &bpt->mgr->pool[slot];
+		node = &bpt->mgr->pools[slot];
 		pool->hash_next = node;
 		node->hash_prev = pool;
 	}
@@ -272,11 +273,11 @@ static void bpt_linkhash(struct bptree *bpt, struct bpt_pool *pool,
 struct bpt_pool *bpt_findpool(struct bptree *bpt, pageno_t page_no,
 			      unsigned int hash_val)
 {
-	struct bpt_pool *pool = NULL;
+	struct bpt_pool *pool;
 	unsigned int slot;
 
 	if ((slot = bpt->mgr->pool_bkts[hash_val])) {
-		pool = &bpt->mgr->pool[slot];
+		pool = &bpt->mgr->pools[slot];
 	} else {
 		pool = NULL;
 		goto out;
@@ -323,7 +324,7 @@ struct bpt_pool *bpt_pinpool(struct bptree *bpt, pageno_t page_no)
 	/* Allocate a new pool node and add to hash table */
 	slot = __sync_fetch_and_add(&mgr->pool_cnt, 1);
 	if (++slot < mgr->pool_max) {
-		pool = &mgr->pool[slot];
+		pool = &mgr->pools[slot];
 		pool->slot = slot;
 
 		if (bpt_mapsegment(bpt, pool, page_no)) {
@@ -331,7 +332,7 @@ struct bpt_pool *bpt_pinpool(struct bptree *bpt, pageno_t page_no)
 			goto out;
 		}
 
-		bpt_linkhash(bpt, pool, page_no, hashv);
+		bpt_linkpool(bpt, pool, page_no, hashv);
 		spin_wrunlock(&mgr->pool_bkt_locks[hashv]);
 		goto out;
 	}
@@ -342,7 +343,7 @@ struct bpt_pool *bpt_pinpool(struct bptree *bpt, pageno_t page_no)
 	while (TRUE) {
 		victim = __sync_fetch_and_add(&mgr->evicted, 1);
 		victim %= bpt->mgr->pool_max;
-		pool = &bpt->mgr->pool[victim];
+		pool = &bpt->mgr->pools[victim];
 		idx = (unsigned int)(pool->basepage >> mgr->seg_bits) %
 			mgr->hash_size;
 
@@ -386,7 +387,7 @@ struct bpt_pool *bpt_pinpool(struct bptree *bpt, pageno_t page_no)
 			goto out;
 		}
 
-		bpt_linkhash(bpt, pool, page_no, hashv);
+		bpt_linkpool(bpt, pool, page_no, hashv);
 		spin_wrunlock(&mgr->pool_bkt_locks[hashv]);
 
 		goto out;
@@ -456,8 +457,8 @@ void bpt_closemgr(struct bpt_mgr *mgr)
 	if (mgr->fd) {
 		close(mgr->fd);
 	}
-	if (mgr->pool) {
-		bpt_free(mgr->pool);
+	if (mgr->pools) {
+		bpt_free(mgr->pools);
 	}
 	if (mgr->pool_bkts) {
 		bpt_free(mgr->pool_bkts);
@@ -586,8 +587,8 @@ struct bpt_mgr *bpt_openmgr(const char *name,
 
 	mgr->hash_size = hash_size;
 
-	mgr->pool = calloc(pool_max, sizeof(struct bpt_pool));
-	if (mgr->pool == NULL) {
+	mgr->pools = calloc(pool_max, sizeof(struct bpt_pool));
+	if (mgr->pools == NULL) {
 		goto out;
 	}
 	mgr->pool_bkts = calloc(hash_size, sizeof(unsigned short));
@@ -1737,7 +1738,57 @@ void dump_bpt_page(struct bpt_page *page)
 	       " keys   : ",
 	       page->count, page->active, page->level, page->min,
 	       page->free, page->kill, page->dirty, bpt_getpageno(page->right));
+
 	dump_keys_in_page(page);
+}
+
+static int dbg_load_page(int fd, struct bpt_page *page,
+			 unsigned int page_size,
+			 pageno_t page_no)
+{
+	int rc = 0;
+	off_t offset;
+
+	offset = page_no * page_size;
+	if (pread(fd, page, page_size, offset) != page_size) {
+		rc = -1;
+	}
+
+	return rc;
+}
+
+void dump_free_page_list(int fd, struct bpt_page *alloc,
+			 unsigned int page_size)
+{
+	int rc = 0;
+	struct bpt_page *page;
+	pageno_t page_no;
+
+	page = bpt_malloc(page_size);
+	if (page == NULL) {
+		printf("Failed to allocate page!\n");
+		return;
+	}
+
+	printf("-------- b+tree free page list --------\n");
+
+	page_no = bpt_getpageno(alloc->right);
+	while (page_no) {
+		printf("0x%llx->", page_no);
+		rc = dbg_load_page(fd, page, page_size, page_no);
+		if (rc != 0) {
+			printf("Failed to load page 0x%llx, error:%d\n",
+			       page_no, rc);
+			break;
+		}
+		page_no = bpt_getpageno(page->right);
+	}
+
+	if (rc == 0) {
+		printf("nil\n");
+	}
+
+	free(page);
 }
 
 #ifdef _BPT_UNITTEST

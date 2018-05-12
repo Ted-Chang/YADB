@@ -20,3 +20,10 @@ Yet Another DataBase
 $1 = void
 ```
 
+### Dump b+tree free page list with gdb
+```
+(gdb) p dump_free_page_list(mgr->fd, &mgr->latchmgr->alloc[1], mgr->page_size)
+-------- b+tree free page list --------
+0x1b->0x1a->0x19->0x18->0x17->0x16->0x15->0x14->0x13->0x12->0x11->0x10->0xf->0xe->0xd->0xc->0xb->nil
+$1 = void
+```

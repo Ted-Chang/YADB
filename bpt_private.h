@@ -123,8 +123,9 @@ struct bpt_page_set {
  * +-----------------------+  -
  * |        alloc[1]       |  ^
  * |        alloc[2]       |  |
- * |          ...          |  |
- * +-------+-------+-------+ page size
+ * +-----------------------+ page size
+ * |      other fields     |  |
+ * +-------+-------+-------+<-+----- buckets
  * | lock  |  ...  | lock  |  |
  * | slot  |       | slot  |  v
  * +-------+-------+-------+  -
@@ -155,16 +156,16 @@ struct bpt_mgr {
 	volatile unsigned int evicted;
 	unsigned short *pool_bkts;// hash table for page segments pool
 
-	/* latch for hash table slots */
+	/* lock for hash table slots */
 	struct spin_rwlock *pool_bkt_locks;
 	
 	/* mapped latch page from allocation page */
 	struct bpt_latch_mgr *latchmgr;
 
-	/* mapped latch set from latch pages */
+	/* mapped latches from latch pages */
 	struct bpt_latch *latches;
 
-	struct bpt_pool *pool;	// page segments pool
+	struct bpt_pool *pools;	// page segments pool
 };
 
 /* b+tree handle */
