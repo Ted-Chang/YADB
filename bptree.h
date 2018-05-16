@@ -24,6 +24,8 @@ extern int bpt_insertkey(bptree_t h, unsigned char *key,
 			 pageno_t page_no);
 extern int bpt_deletekey(bptree_t h, unsigned char *key,
 			 unsigned int len, bpt_level_t level);
+extern pageno_t bpt_findkey(bptree_t h, unsigned char *key,
+			    unsigned int len);
 extern unsigned int bpt_firstkey(bptree_t h, unsigned char *key,
 				 unsigned int len);
 extern unsigned int bpt_nextkey(bptree_t h, unsigned int slot);

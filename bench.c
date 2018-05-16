@@ -12,6 +12,7 @@
 #include <sys/syscall.h>
 #include <semaphore.h>
 #include <signal.h>
+#include <assert.h>
 #include "bptree.h"
 #include "bptdef.h"
 
@@ -24,7 +25,11 @@ struct key_value {
 struct bench_option {
 	unsigned int page_bits;
 	int rounds;
-	int read;
+	enum {
+		BENCH_OP_READ,
+		BENCH_OP_WRITE,
+		BENCH_OP_RW,
+	} op;
 	bool_t random;
 	bool_t no_cleanup;
 	unsigned int cache_capacity;
@@ -45,17 +50,18 @@ struct thread_info {
 	pthread_t thread;
 	struct bpt_mgr *mgr;
 	sem_t *sem;
+	int op;
 	struct shm_bench_data *bench_data;
 };
 
 static void usage();
 static void print_seperator();
-static void do_bench(bptree_t h, struct shm_bench_data *bench_data);
+static void do_bench(bptree_t h, struct shm_bench_data *bench_data, int op);
 
 struct bench_option opts = {
 	12,	// page_bits
 	64*1024,// rounds
-	1,	// read
+	BENCH_OP_WRITE,	// op
 	FALSE,	// random
 	FALSE,	// no_cleanup
 	0,	// cache_capacity
@@ -73,11 +79,25 @@ const char *bench_sem_name = "/bpt-bench";
 sem_t *bench_sem = SEM_FAILED;
 struct bpt_mgr *mgr = NULL;
 
+static const char *bench_op_str(int op)
+{
+	switch (op) {
+	case BENCH_OP_READ:
+		return "read";
+	case BENCH_OP_WRITE:
+		return "write";
+	case BENCH_OP_RW:
+		return "rw";
+	default:
+		return "unknown";
+	}
+}
+
 static void dump_options(struct bench_option *options)
 {
 	printf("Page bits           : %d\n", options->page_bits);
 	printf("Number of keys      : %d\n", options->rounds);
-	printf("Operation           : %s\n", options->read ? "read" : "write");
+	printf("Operation           : %s\n", bench_op_str(options->op));
 	printf("IO pattern          : %s\n", options->random ? "random" : "sequential");
 	printf("Cache capacity      : %d\n", options->cache_capacity);
 	printf("Number of threads   : %d\n", options->nr_threads);
@@ -185,7 +205,7 @@ static void *benchmark_thread(void *arg)
 
 	printf("thread:%ld benchmarking started...\n", gettid());
 
-	do_bench(h, sbd);
+	do_bench(h, sbd, ti->op);
 
  out:
 	sem_post(ti->sem);
@@ -195,13 +215,13 @@ static void *benchmark_thread(void *arg)
 	return NULL;
 }
 
-static void bench_prefill_data(struct shm_bench_data *sbd,
+static void bench_prepare_data(struct shm_bench_data *sbd,
 			       int nr_kvs,
 			       bool_t random)
 {
 	int i;
 	
-	/* Key/value prefill */
+	/* prepare key/value pairs */
 	sbd->nr_kvs = nr_kvs;
 	for (i = 0; i < sbd->nr_kvs; i++) {
 		sbd->kvs[i].len = sprintf(sbd->kvs[i].key,
@@ -228,6 +248,25 @@ static void bench_prefill_data(struct shm_bench_data *sbd,
 	}
 }
 
+static void bench_prefill_data(bptree_t h,
+			       struct shm_bench_data *sbd)
+{
+	int rc;
+	struct key_value *kv = NULL;
+	int i;
+	
+	for (i = 0; i < sbd->nr_kvs; i++) {
+		kv = &sbd->kvs[i];
+		rc = bpt_insertkey(h, (unsigned char *)kv->key,
+				   kv->len, 0, kv->value);
+		if (rc != 0) {
+			fprintf(stderr, "Failed to insert key: %s\n",
+				kv->key);
+			assert(0);
+		}
+	}
+}
+
 static void bench_cleanup_data(bptree_t h,
 			       struct shm_bench_data *sbd)
 {
@@ -246,19 +285,32 @@ static void bench_cleanup_data(bptree_t h,
 	}
 }
 
-static void do_bench(bptree_t h, struct shm_bench_data *sbd)
+static void do_bench(bptree_t h, struct shm_bench_data *sbd, int op)
 {
 	int rc;
 	unsigned int i;
+	pageno_t page_no;
 	
-	while ((i = __sync_add_and_fetch(&sbd->index, 1)) <
-	       sbd->nr_kvs) {
-		rc = bpt_insertkey(h, (unsigned char *)sbd->kvs[i].key,
-				   sbd->kvs[i].len, 0,
-				   sbd->kvs[i].value);
-		if (rc != 0) {
-			fprintf(stderr, "Failed to insert key: %s\n",
-				sbd->kvs[i].key);
+	while ((i = __sync_add_and_fetch(&sbd->index, 1)) < sbd->nr_kvs) {
+		if (op == BENCH_OP_READ) {
+			page_no = bpt_findkey(h, (unsigned char *)sbd->kvs[i].key,
+					      sbd->kvs[i].len);
+			if (page_no == 0) {
+				fprintf(stderr, "Failed to find key: %s\n",
+					sbd->kvs[i].key);
+				break;
+			}
+		} else if (op == BENCH_OP_WRITE) {
+			rc = bpt_insertkey(h, (unsigned char *)sbd->kvs[i].key,
+					   sbd->kvs[i].len, 0,
+					   sbd->kvs[i].value);
+			if (rc != 0) {
+				fprintf(stderr, "Failed to insert key: %s\n",
+					sbd->kvs[i].key);
+				break;
+			}
+		} else {
+			fprintf(stderr, "Mixed read/write not supported yet!\n");
 			break;
 		}
 	}
@@ -291,12 +343,12 @@ int main(int argc, char *argv[])
 			}
 			break;
 		case 'o':
-			if (strcmp(optarg, "r") == 0) {
-				opts.read = 1;
-			} else if (strcmp(optarg, "w") == 0) {
-				opts.read = 0;
+			if (strcmp(optarg, "read") == 0) {
+				opts.op = BENCH_OP_READ;
+			} else if (strcmp(optarg, "write") == 0) {
+				opts.op = BENCH_OP_WRITE;
 			} else if (strcmp(optarg, "rw") == 0) {
-				opts.read = 0;
+				opts.op = BENCH_OP_RW;
 			} else {
 				fprintf(stderr, "Illegal operation:%s\n", optarg);
 				goto out;
@@ -382,8 +434,8 @@ int main(int argc, char *argv[])
 	pthread_cond_init(&bench_data->cond, &cond_attr);
 	pthread_condattr_destroy(&cond_attr);
 
-	/* Prefill test key values */
-	bench_prefill_data(bench_data, opts.rounds, opts.random);
+	/* Prepare test key values */
+	bench_prepare_data(bench_data, opts.rounds, opts.random);
 
 	/* Create/Open b+tree */
 	mgr = bpt_openmgr("bptbench.dat", opts.page_bits, 128, 13);
@@ -398,7 +450,12 @@ int main(int argc, char *argv[])
 		fprintf(stderr, "Failed to open/create b+tree!\n");
 		goto out;
 	}
-	
+
+	/* Need to prefill data if we're doing read benchmark */
+	if (opts.op == BENCH_OP_READ) {
+		bench_prefill_data(h, bench_data);
+	}
+
 	/* Open semaphore for inter-process coordination */
 	bench_sem = sem_open(bench_sem_name, O_RDWR|O_CREAT|O_EXCL,
 			     0666, 0);
@@ -442,6 +499,7 @@ int main(int argc, char *argv[])
 			ti[i].mgr = mgr;
 			ti[i].sem = bench_sem;
 			ti[i].bench_data = bench_data;
+			ti[i].op = opts.op;
 			rc = pthread_create(&ti[i].thread, NULL,
 					    benchmark_thread,
 					    &ti[i]);
@@ -506,7 +564,7 @@ int main(int argc, char *argv[])
 		}
 	}
 
-	do_bench(h, bench_data);
+	do_bench(h, bench_data, opts.op);
 
 	if (is_parent) {
 		for (i = 0; i < (opts.nr_processes * opts.nr_threads - 1); i++) {
@@ -566,8 +624,10 @@ int main(int argc, char *argv[])
 
 static void usage()
 {
-	printf("usage: bench [-p <page-bits>] [-n <num-keys>] [-o <read/write>] [-r] \\\n"
-	       "  [-c <capacity>] [-C] [-P <#processes>]\n");
+	printf("usage: bench [-p <page-bits>] [-n <#keys>] [-o <read|write>] [-r] \\\n"
+	       "  [-c <capacity>] [-C] [-P <#processes>]\n"
+	       " -r        random I/O\n"
+	       " -C        do not cleanup data after test\n");
 	printf("default options:\n");
 	dump_options(&opts);
 }

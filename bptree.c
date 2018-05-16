@@ -53,8 +53,10 @@ int keycmp(struct bpt_key *key1, unsigned char *key2, unsigned int len2)
 	return 0;
 }
 
-struct bpt_page *bpt_page(struct bptree *bpt, struct bpt_pool *pool,
-			  pageno_t page_no)
+static
+struct bpt_page *
+bpt_page(struct bptree *bpt, struct bpt_pool *pool,
+	 pageno_t page_no)
 {
 	struct bpt_page *page;
 	unsigned int subpage;
@@ -109,7 +111,9 @@ static void bpt_linklatch(struct bptree *bpt, unsigned short hash_val,
 	latch->prev = 0;
 }
 
-static struct bpt_latch *bpt_pinlatch(struct bptree *bpt, pageno_t page_no)
+static
+struct bpt_latch *
+bpt_pinlatch(struct bptree *bpt, pageno_t page_no)
 {
 	struct bpt_latch *latch;
 	struct bpt_mgr *mgr;
@@ -270,8 +274,10 @@ static void bpt_linkpool(struct bptree *bpt, struct bpt_pool *pool,
 	bpt->mgr->pool_bkts[hash_val] = pool->slot;
 }
 
-struct bpt_pool *bpt_findpool(struct bptree *bpt, pageno_t page_no,
-			      unsigned int hash_val)
+static
+struct bpt_pool *
+bpt_findpool(struct bptree *bpt, pageno_t page_no,
+	     unsigned int hash_val)
 {
 	struct bpt_pool *pool;
 	unsigned int slot;
@@ -297,7 +303,9 @@ struct bpt_pool *bpt_findpool(struct bptree *bpt, pageno_t page_no,
 	return pool;
 }
 
-struct bpt_pool *bpt_pinpool(struct bptree *bpt, pageno_t page_no)
+static
+struct bpt_pool *
+bpt_pinpool(struct bptree *bpt, pageno_t page_no)
 {
 	unsigned int slot;
 	unsigned int hashv;
@@ -397,7 +405,7 @@ struct bpt_pool *bpt_pinpool(struct bptree *bpt, pageno_t page_no)
 	return pool;
 }
 
-void bpt_unpinpool(struct bpt_pool *pool)
+static void bpt_unpinpool(struct bpt_pool *pool)
 {
 	__sync_fetch_and_add(&pool->pin, -1);
 }
