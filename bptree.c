@@ -101,11 +101,11 @@ static void bpt_linklatch(struct bptree *bpt, unsigned short hash_val,
 	struct bpt_latch *latch;
 
 	latch = &bpt->mgr->latches[victim];
-	if ((latch->next = bpt->mgr->latchmgr->buckets[hash_val].slot)) {
+	if ((latch->next = bpt->mgr->latchmgr->latch_tbl[hash_val].slot)) {
 		bpt->mgr->latches[latch->next].prev = victim;
 	}
 
-	bpt->mgr->latchmgr->buckets[hash_val].slot = victim;
+	bpt->mgr->latchmgr->latch_tbl[hash_val].slot = victim;
 	latch->page_no = page_no;
 	latch->hashv = hash_val;
 	latch->prev = 0;
@@ -125,13 +125,13 @@ bpt_pinlatch(struct bptree *bpt, pageno_t page_no)
 
 	latch = NULL;
 	mgr = bpt->mgr;
-	hashv = page_no % mgr->latchmgr->nr_buckets;
+	hashv = page_no % mgr->latchmgr->tbl_size;
 	avail = 0;
 
 	/* Try to find the latch table entry and pin it for this page */
-	spin_rdlock(&mgr->latchmgr->buckets[hashv].lock);
+	spin_rdlock(&mgr->latchmgr->latch_tbl[hashv].lock);
 
-	if ((slot = mgr->latchmgr->buckets[hashv].slot)) {
+	if ((slot = mgr->latchmgr->latch_tbl[hashv].slot)) {
 		do {
 			latch = &mgr->latches[slot];
 			if (page_no == latch->page_no) {
@@ -143,7 +143,7 @@ bpt_pinlatch(struct bptree *bpt, pageno_t page_no)
 		__sync_fetch_and_add(&latch->pin, 1);
 	}
 
-	spin_rdunlock(&mgr->latchmgr->buckets[hashv].lock);
+	spin_rdunlock(&mgr->latchmgr->latch_tbl[hashv].lock);
 
 	if (slot) {
 		/* Found the latch and pinned it */
@@ -153,9 +153,9 @@ bpt_pinlatch(struct bptree *bpt, pageno_t page_no)
 	/* Latch not found, reacquire write lock as we may allocate a
 	 * new entry from buckets
 	 */
-	spin_wrlock(&mgr->latchmgr->buckets[hashv].lock);
+	spin_wrlock(&mgr->latchmgr->latch_tbl[hashv].lock);
 
-	if ((slot = mgr->latchmgr->buckets[hashv].slot)) {
+	if ((slot = mgr->latchmgr->latch_tbl[hashv].slot)) {
 		do {
 			latch = &mgr->latches[slot];
 			if (page_no == latch->page_no) {
@@ -173,7 +173,7 @@ bpt_pinlatch(struct bptree *bpt, pageno_t page_no)
 		latch = &mgr->latches[slot];
 		__sync_fetch_and_add(&latch->pin, 1);
 		latch->page_no = page_no;
-		spin_wrunlock(&mgr->latchmgr->buckets[hashv].lock);
+		spin_wrunlock(&mgr->latchmgr->latch_tbl[hashv].lock);
 		goto out;
 	}
 
@@ -186,7 +186,7 @@ bpt_pinlatch(struct bptree *bpt, pageno_t page_no)
 		bpt_initlatch(latch);
 		__sync_fetch_and_add(&latch->pin, 1);
 		bpt_linklatch(bpt, hashv, victim, page_no);
-		spin_wrunlock(&mgr->latchmgr->buckets[hashv].lock);
+		spin_wrunlock(&mgr->latchmgr->latch_tbl[hashv].lock);
 		goto out;
 	}
 
@@ -212,14 +212,14 @@ bpt_pinlatch(struct bptree *bpt, pageno_t page_no)
 		/* Try to acquire write lock on hash chain
 		 * Skip entry if not obtained or has outstanding locks
 		 */
-		if (!spin_trywrlock(&mgr->latchmgr->buckets[idx].lock)) {
+		if (!spin_trywrlock(&mgr->latchmgr->latch_tbl[idx].lock)) {
 			spin_wrunlock(&latch->busy);
 			continue;
 		}
 
 		if (latch->pin) {
 			spin_wrunlock(&latch->busy);
-			spin_wrunlock(&mgr->latchmgr->buckets[idx].lock);
+			spin_wrunlock(&mgr->latchmgr->latch_tbl[idx].lock);
 			continue;
 		}
 
@@ -227,20 +227,20 @@ bpt_pinlatch(struct bptree *bpt, pageno_t page_no)
 		if (latch->prev) {
 			mgr->latches[latch->prev].next = latch->next;
 		} else {
-			mgr->latchmgr->buckets[idx].slot = latch->next;
+			mgr->latchmgr->latch_tbl[idx].slot = latch->next;
 		}
 
 		if (latch->next) {
 			mgr->latches[latch->next].prev = latch->prev;
 		}
 
-		spin_wrunlock(&mgr->latchmgr->buckets[idx].lock);
+		spin_wrunlock(&mgr->latchmgr->latch_tbl[idx].lock);
 
 		/* Pin it and link to our hash chain */
 		__sync_fetch_and_add(&latch->pin, 1);
 		bpt_linklatch(bpt, hashv, victim, page_no);
 
-		spin_wrunlock(&mgr->latchmgr->buckets[hashv].lock);
+		spin_wrunlock(&mgr->latchmgr->latch_tbl[hashv].lock);
 		spin_wrunlock(&latch->busy);
 		goto out;
 	}
@@ -264,14 +264,14 @@ static void bpt_linkpool(struct bptree *bpt, struct bpt_pool *pool,
 	pool->basepage = page_no & ~bpt->mgr->pool_mask;
 	pool->pin = CLOCK_BIT + 1;
 
-	slot = bpt->mgr->pool_bkts[hash_val];
+	slot = bpt->mgr->pool_tbl[hash_val];
 	if (slot) {
 		node = &bpt->mgr->pools[slot];
 		pool->hash_next = node;
 		node->hash_prev = pool;
 	}
 
-	bpt->mgr->pool_bkts[hash_val] = pool->slot;
+	bpt->mgr->pool_tbl[hash_val] = pool->slot;
 }
 
 static
@@ -282,7 +282,7 @@ bpt_findpool(struct bptree *bpt, pageno_t page_no,
 	struct bpt_pool *pool;
 	unsigned int slot;
 
-	if ((slot = bpt->mgr->pool_bkts[hash_val])) {
+	if ((slot = bpt->mgr->pool_tbl[hash_val])) {
 		pool = &bpt->mgr->pools[slot];
 	} else {
 		pool = NULL;
@@ -318,14 +318,14 @@ bpt_pinpool(struct bptree *bpt, pageno_t page_no)
 	mgr = bpt->mgr;
 
 	/* Lock the page pool bucket */
-	hashv = (unsigned int)(page_no >> mgr->seg_bits) % mgr->hash_size;
-	spin_wrlock(&mgr->pool_bkt_locks[hashv]);
+	hashv = (unsigned int)(page_no >> mgr->seg_bits) % mgr->tbl_size;
+	spin_wrlock(&mgr->pool_tbl_locks[hashv]);
 
 	/* Lookup the page in hash table */
 	if ((pool = bpt_findpool(bpt, page_no, hashv))) {
 		__sync_fetch_and_or(&pool->pin, CLOCK_BIT);
 		__sync_fetch_and_add(&pool->pin, 1);
-		spin_wrunlock(&bpt->mgr->pool_bkt_locks[hashv]);
+		spin_wrunlock(&bpt->mgr->pool_tbl_locks[hashv]);
 		goto out;
 	}
 
@@ -341,7 +341,7 @@ bpt_pinpool(struct bptree *bpt, pageno_t page_no)
 		}
 
 		bpt_linkpool(bpt, pool, page_no, hashv);
-		spin_wrunlock(&mgr->pool_bkt_locks[hashv]);
+		spin_wrunlock(&mgr->pool_tbl_locks[hashv]);
 		goto out;
 	}
 
@@ -353,20 +353,20 @@ bpt_pinpool(struct bptree *bpt, pageno_t page_no)
 		victim %= bpt->mgr->pool_max;
 		pool = &bpt->mgr->pools[victim];
 		idx = (unsigned int)(pool->basepage >> mgr->seg_bits) %
-			mgr->hash_size;
+			mgr->tbl_size;
 
 		if (!victim) {
 			continue;
 		}
 
-		if (!spin_trywrlock(&mgr->pool_bkt_locks[idx])) {
+		if (!spin_trywrlock(&mgr->pool_tbl_locks[idx])) {
 			continue;
 		}
 
 		/* Skip this entry if page is pinned or clock bit is set */
 		if (pool->pin) {
 			__sync_fetch_and_and(&pool->pin, ~CLOCK_BIT);
-			spin_wrunlock(&mgr->pool_bkt_locks[idx]);
+			spin_wrunlock(&mgr->pool_tbl_locks[idx]);
 			continue;
 		}
 
@@ -374,16 +374,16 @@ bpt_pinpool(struct bptree *bpt, pageno_t page_no)
 		if ((node = pool->hash_prev)) {
 			node->hash_next = pool->hash_next;
 		} else if ((node = pool->hash_next)) {
-			mgr->pool_bkts[idx] = node->slot;
+			mgr->pool_tbl[idx] = node->slot;
 		} else {
-			mgr->pool_bkts[idx] = 0;
+			mgr->pool_tbl[idx] = 0;
 		}
 
 		if ((node = pool->hash_next)) {
 			node->hash_prev = pool->hash_prev;
 		}
 
-		spin_wrunlock(&mgr->pool_bkt_locks[idx]);
+		spin_wrunlock(&mgr->pool_tbl_locks[idx]);
 
 		/* Remove old file mapping */
 		munmap(pool->map, (mgr->pool_mask + 1) << mgr->page_bits);
@@ -396,7 +396,7 @@ bpt_pinpool(struct bptree *bpt, pageno_t page_no)
 		}
 
 		bpt_linkpool(bpt, pool, page_no, hashv);
-		spin_wrunlock(&mgr->pool_bkt_locks[hashv]);
+		spin_wrunlock(&mgr->pool_tbl_locks[hashv]);
 
 		goto out;
 	}
@@ -468,11 +468,11 @@ void bpt_closemgr(struct bpt_mgr *mgr)
 	if (mgr->pools) {
 		bpt_free(mgr->pools);
 	}
-	if (mgr->pool_bkts) {
-		bpt_free(mgr->pool_bkts);
+	if (mgr->pool_tbl) {
+		bpt_free(mgr->pool_tbl);
 	}
-	if (mgr->pool_bkt_locks) {
-		bpt_free(mgr->pool_bkt_locks);
+	if (mgr->pool_tbl_locks) {
+		bpt_free(mgr->pool_tbl_locks);
 	}
 	bpt_free(mgr);
 }
@@ -499,7 +499,7 @@ void bpt_closemgr(struct bpt_mgr *mgr)
 struct bpt_mgr *bpt_openmgr(const char *name,
 			    unsigned int page_bits,
 			    unsigned int pool_max,
-			    unsigned int hash_size)
+			    unsigned int ht_size)
 {
 	int rc = 0;
 	struct bpt_mgr *mgr = NULL;
@@ -511,7 +511,7 @@ struct bpt_mgr *bpt_openmgr(const char *name,
 	unsigned int cache_blk;
 	unsigned int last;
 	unsigned int latch_per_page;
-	unsigned int nr_buckets;
+	unsigned int tbl_size;
 	unsigned short nr_latch_pages = 0;
 	int flags;
 	bpt_level_t level;
@@ -593,18 +593,18 @@ struct bpt_mgr *bpt_openmgr(const char *name,
 		mgr->seg_bits++;
 	}
 
-	mgr->hash_size = hash_size;
+	mgr->tbl_size = ht_size;
 
 	mgr->pools = calloc(pool_max, sizeof(struct bpt_pool));
 	if (mgr->pools == NULL) {
 		goto out;
 	}
-	mgr->pool_bkts = calloc(hash_size, sizeof(unsigned short));
-	if (mgr->pool_bkts == NULL) {
+	mgr->pool_tbl = calloc(ht_size, sizeof(unsigned short));
+	if (mgr->pool_tbl == NULL) {
 		goto out;
 	}
-	mgr->pool_bkt_locks = calloc(hash_size, sizeof(struct spin_rwlock));
-	if (mgr->pool_bkt_locks == NULL) {
+	mgr->pool_tbl_locks = calloc(ht_size, sizeof(struct spin_rwlock));
+	if (mgr->pool_tbl_locks == NULL) {
 		goto out;
 	}
 
@@ -636,13 +636,13 @@ struct bpt_mgr *bpt_openmgr(const char *name,
 		      PAGE_ROOT + MIN_LEVEL + nr_latch_pages);
 
 	/* Calculate how many hash entries can alloc page holds */
-	nr_buckets = (unsigned short)((mgr->page_size - sizeof(*latchmgr)) /
-				      sizeof(struct hash_entry));
-	if (nr_buckets > latchmgr->nr_latch_total) {
-		nr_buckets = latchmgr->nr_latch_total;
+	tbl_size = (unsigned short)((mgr->page_size - sizeof(*latchmgr)) /
+				    sizeof(struct latch_hash_bucket));
+	if (tbl_size > latchmgr->nr_latch_total) {
+		tbl_size = latchmgr->nr_latch_total;
 	}
 
-	latchmgr->nr_buckets = nr_buckets;
+	latchmgr->tbl_size = tbl_size;
 
 	if (write(mgr->fd, latchmgr, mgr->page_size) < mgr->page_size) {
 		LOG(ERR, "write latchmgr, %d bytes failed\n", mgr->page_size);

@@ -13,7 +13,8 @@
 
 #define BPT_LATCH_TABLE	128	// number of latch manager slots
 
-#define PAGE_NUM_BYTES	6	// maximum addressable space is 6-bytes integer * max-page-size
+/* maximum addressable space is 6-bytes integer * max-page-size */
+#define PAGE_NUM_BYTES	6	
 
 /* stopper key is 2 bytes, plus 1 byte for key length, so 3 bytes */
 #define STOPPER_KEY_LEN	3
@@ -37,10 +38,10 @@ typedef enum {
 } bpt_mode_t;
 
 struct bpt_slot {
-	unsigned int offset:BPT_MAX_PAGE_SHIFT;	// Page offset for the key start
-	unsigned int dead:1;	// Set for deleted key
+	unsigned int offset:BPT_MAX_PAGE_SHIFT;	// page offset for the key
+	unsigned int dead:1;	// set for deleted key
 	unsigned int reserved:17;
-	unsigned char page_no[PAGE_NUM_BYTES]; // Child page associated with slot
+	unsigned char page_no[PAGE_NUM_BYTES]; // child page associated with slot
 };
 
 struct bpt_key {
@@ -48,13 +49,13 @@ struct bpt_key {
 	unsigned char key[0];
 };
 
-/* Macros to address slot and keys within the page.
- * Page slots index beginning from 1.
+/* macros to address slot and keys within the page.
+ * page slots index beginning from 1.
  */
 #define slotptr(page, slot) (((struct bpt_slot *)(page+1)) + (slot-1))
 #define keyptr(page, slot) ((struct bpt_key *)((char *)(page) + slotptr(page, slot)->offset))
 
-/* b+tree page latch set */
+/* b+tree page latch */
 struct bpt_latch {
 	struct rwlock rdwr;	// read/write access lock
 	struct rwlock parent;	// parent update lock
@@ -67,9 +68,9 @@ struct bpt_latch {
 	volatile pageno_t page_no;	// latch page number
 };
 
-struct hash_entry {
+struct latch_hash_bucket {
 	struct spin_rwlock lock;
-	/* latch table entry at the head of chain */
+	/* head of the latch hash bucket */
 	volatile unsigned short slot;
 };
 
@@ -101,6 +102,7 @@ struct bpt_page {
 	unsigned char right[PAGE_NUM_BYTES]; // Next page number
 };
 
+/* page pool */
 struct bpt_pool {
 	pageno_t basepage;	// mapped base pageno
 	char *map;		// mapped memory pointer
@@ -110,12 +112,12 @@ struct bpt_pool {
 	struct bpt_pool *hash_next;
 };
 
-#define CLOCK_BIT	0x8000	// Bit for pool->pin
+#define CLOCK_BIT	0x8000	// bit for pool->pin
 
 struct bpt_page_set {
 	pageno_t page_no;
-	struct bpt_page *page;
-	struct bpt_pool *pool;
+	struct bpt_page *page;  // the b+tree page itself
+	struct bpt_pool *pool;	// page pool this page lies on
 	struct bpt_latch *latch;
 };
 
@@ -125,7 +127,7 @@ struct bpt_page_set {
  * |        alloc[2]       |  |
  * +-----------------------+ page size
  * |      other fields     |  |
- * +-------+-------+-------+<-+----- buckets
+ * +-------+-------+-------+<-+----- latch_tbl
  * | lock  |  ...  | lock  |  |
  * | slot  |       | slot  |  v
  * +-------+-------+-------+  -
@@ -137,8 +139,8 @@ struct bpt_latch_mgr {
 	unsigned short nr_latch_pages;
 	unsigned short nr_latch_total;
 	unsigned short victim;
-	unsigned short nr_buckets;
-	struct hash_entry buckets[0];
+	unsigned short tbl_size;
+	struct latch_hash_bucket latch_tbl[0];
 };
 
 struct bpt_mgr {
@@ -150,14 +152,14 @@ struct bpt_mgr {
 	int pool_cnt;		// current number of page pool
 	int pool_max;		// maximum number of page pool
 	int pool_mask;		// number of pages in segments - 1
-	int hash_size;		// hash bucket size
+	int tbl_size;		// size of page segments pool hash table
 
-	/* last evicted pool table slot */
+	/* last evicted pool hash table entry */
 	volatile unsigned int evicted;
-	unsigned short *pool_bkts;// hash table for page segments pool
+	unsigned short *pool_tbl;// hash table for page segments pool
 
-	/* lock for hash table slots */
-	struct spin_rwlock *pool_bkt_locks;
+	/* locks for pool hash table */
+	struct spin_rwlock *pool_tbl_locks;
 	
 	/* mapped latch page from allocation page */
 	struct bpt_latch_mgr *latchmgr;
