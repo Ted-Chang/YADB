@@ -134,6 +134,7 @@ struct bpt_page_set {
  */
 struct bpt_latch_mgr {
 	struct bpt_page alloc[2];
+	struct bpt_iostat iostat;// I/O statistics info
 	struct spin_rwlock lock;
 	unsigned short latch_deployed;
 	unsigned short nr_latch_pages;

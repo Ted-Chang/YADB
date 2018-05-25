@@ -5,13 +5,17 @@ CC = gcc
 all: bptest bench lktest
 
 lktest:
-	$(CC) -D_LOCK_UNITTEST lock.c -lpthread -o lktest
+	$(CC) $(CFLAGS) -D_LOCK_UNITTEST lock.c -lpthread -o lktest
 
 bptest:
-	$(CC) -D_BPT_UNITTEST bptree.c lock.c -lpthread -o bptest
+	$(CC) $(CFLAGS) -D_BPT_UNITTEST bptree.c lock.c -lpthread -o bptest
 
 bench: bench.o bptree.o lock.o
-	$(CC) $^ -lpthread -lrt -o $@
+	$(CC) $(CFLAGS) $^ -lpthread -lrt -o $@
+
+check:
+	rm bpt.dat -f
+	valgrind ./bptest
 
 clean:
 	rm *.o bptest bench lktest

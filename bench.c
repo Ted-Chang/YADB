@@ -146,7 +146,8 @@ static void bench_cleanup()
 
 static void bench_sig_handler(const int sig)
 {
-	if ((sig != SIGTERM) && (sig != SIGQUIT) && (sig != SIGINT)) {
+	if ((sig != SIGTERM) && (sig != SIGQUIT) &&
+	    (sig != SIGINT) && (sig != SIGSEGV)) {
 		return;
 	}
 
@@ -157,12 +158,10 @@ static void bench_sig_handler(const int sig)
 
 static void dump_bpt_iostat(struct bpt_iostat *iostat)
 {
-	printf("BPT iostat:\n");
-	//printf("reads        : %lld\n", iostat->reads);
-	//printf("writes       : %lld\n", iostat->writes);
-	//printf("cache miss   : %lld\n", iostat->cache_miss);
-	//printf("cache hit    : %lld\n", iostat->cache_hit);
-	//printf("cache retire : %lld\n", iostat->cache_retire);
+	printf("pool maps    : %lld\n", iostat->pool_maps);
+	printf("pool unmaps  : %lld\n", iostat->pool_unmaps);
+	printf("latch hits   : %lld\n", iostat->latch_hits);
+	printf("latch evicts : %lld\n", iostat->latch_evicts);
 }
 
 static void *benchmark_thread(void *arg)
@@ -601,6 +600,8 @@ int main(int argc, char *argv[])
 		print_seperator();
 		printf("Elapsed time: %f seconds\n", t);
 		print_seperator();
+		printf("BPT I/O statistics:\n");
+		print_seperator();
 		dump_bpt_iostat(&iostat);
 
 		if (!opts.no_cleanup) {
@@ -627,7 +628,7 @@ static void usage()
 	printf("usage: bench [-p <page-bits>] [-n <#keys>] [-o <read|write>] [-r] \\\n"
 	       "  [-c <capacity>] [-C] [-P <#processes>]\n"
 	       " -r        random I/O\n"
-	       " -C        do not cleanup data after test\n");
+	       " -C        do not cleanup data after test\n\n");
 	printf("default options:\n");
 	dump_options(&opts);
 }

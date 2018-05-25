@@ -6,11 +6,10 @@
 struct bpt_mgr;
 
 struct bpt_iostat {
-	volatile unsigned long long reads;
-	volatile unsigned long long writes;
-	volatile unsigned long long cache_miss;
-	volatile unsigned long long cache_hit;
-	volatile unsigned long long cache_retire;
+	volatile unsigned long long pool_maps;
+	volatile unsigned long long pool_unmaps;
+	volatile unsigned long long latch_hits;
+	volatile unsigned long long latch_evicts;
 };
 
 extern struct bpt_mgr *

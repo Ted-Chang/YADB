@@ -1,6 +1,5 @@
 #include <stdio.h>
 #include <string.h>
-#include <sys/syscall.h>
 #include <assert.h>
 #include "lock.h"
 #include "bptdef.h"
