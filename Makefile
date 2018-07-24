@@ -18,5 +18,5 @@ check:
 	valgrind ./bptest
 
 clean:
-	rm *.o bptest bench lktest
+	rm -rf *.o bptest bench lktest
 

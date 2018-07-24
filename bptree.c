@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -200,7 +201,7 @@ bpt_pinlatch(struct bptree *bpt, pageno_t page_no)
 	victim = __sync_fetch_and_add(&latchmgr->latch_deployed, -1);
 
 	/* Scan all the buckets and try to find a victim to evict */
-	while (TRUE) {
+	while (true) {
 		victim = __sync_fetch_and_add(&latchmgr->victim, 1);
 		if ((victim %= latchmgr->nr_latch_total)) {
 			latch = &mgr->latches[victim];
@@ -359,7 +360,7 @@ bpt_pinpool(struct bptree *bpt, pageno_t page_no)
 	/* Page pool is full. Find a pool entry to evict */
 	__sync_fetch_and_add(&mgr->pool_cnt, -1);
 
-	while (TRUE) {
+	while (true) {
 		victim = __sync_fetch_and_add(&mgr->evicted, 1);
 		victim %= bpt->mgr->pool_max;
 		pool = &bpt->mgr->pools[victim];
@@ -810,11 +811,11 @@ pageno_t bpt_newpage(struct bptree *bpt, struct bpt_page *page)
 	struct bpt_page_set set;
 	ssize_t bytes;
 	pageno_t new_page;
-	bool_t reuse;
+	bool reuse;
 
 	mgr = bpt->mgr;
 	new_page = 0;
-	reuse = FALSE;
+	reuse = false;
 
 	spin_wrlock(&mgr->latchmgr->lock);
 
@@ -831,13 +832,13 @@ pageno_t bpt_newpage(struct bptree *bpt, struct bpt_page *page)
 		bpt_putpageno(mgr->latchmgr->alloc[1].right,
 			      bpt_getpageno(set.page->right));
 		bpt_unpinpool(set.pool);
-		reuse = TRUE;
+		reuse = true;
 		LOG(DBG, "reuse free page(0x%llx)\n", new_page);
 	} else {
 		/* Alloc page always point to the tail page. */
 		new_page = bpt_getpageno(mgr->latchmgr->alloc->right);
 		bpt_putpageno(mgr->latchmgr->alloc->right, new_page+1);
-		reuse = FALSE;
+		reuse = false;
 		LOG(DBG, "allocating new page(0x%llx)\n", new_page);
 	}
 
@@ -1303,7 +1304,7 @@ int bpt_insertkey(bptree_t h, unsigned char *key,
 
 	bpt = (struct bptree *)h;
 
-	while (TRUE) {
+	while (true) {
 		if ((slot = bpt_loadpage(bpt, &set, key, len, level,
 					 BPT_LOCK_WRITE))) {
 			ptr = keyptr(set.page, slot);
@@ -1497,9 +1498,9 @@ int bpt_deletekey(bptree_t h, unsigned char *key,
 	unsigned int i;
 	struct bpt_page_set right;
 	struct bpt_page_set set;
-	bool_t fence = FALSE;
-	bool_t found = FALSE;
-	bool_t dirty = FALSE;
+	bool fence = false;
+	bool found = false;
+	bool dirty = false;
 	unsigned char lowerkey[257];
 	unsigned char higherkey[257];
 
@@ -1517,7 +1518,7 @@ int bpt_deletekey(bptree_t h, unsigned char *key,
 	/* If the key was found delete it, otherwise ignore the request */
 	if ((found = (keycmp(ptr, key, len) == 0))) {
 		if ((found = !slotptr(set.page, slot)->dead)) {
-			dirty = TRUE;
+			dirty = true;
 			slotptr(set.page, slot)->dead = 1;
 			set.page->dirty = 1;
 			set.page->active--;
@@ -1716,7 +1717,7 @@ unsigned int bpt_nextkey(bptree_t h, unsigned int slot)
 		bpt_unpinpool(set.pool);
 
 		slot = 0;
-	} while (TRUE);
+	} while (true);
 
 	bpt->status = 0;
  out:

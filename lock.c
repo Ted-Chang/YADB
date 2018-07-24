@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdbool.h>
 #include <string.h>
 #include <assert.h>
 #include "lock.h"
@@ -63,7 +64,7 @@ void spin_rdlock(struct spin_rwlock *lock)
 		}
 
 		sched_yield();
-	} while (TRUE);
+	} while (true);
 }
 
 void spin_wrlock(struct spin_rwlock *lock)
@@ -87,7 +88,7 @@ void spin_wrlock(struct spin_rwlock *lock)
 		}
 
 		sched_yield();
-	} while (TRUE);
+	} while (true);
 }
 
 void spin_rdunlock(struct spin_rwlock *lock)
@@ -134,8 +135,8 @@ int spin_trywrlock(struct spin_rwlock *lock)
 struct lock_test {
 	struct rwlock lock;
 	struct spin_rwlock spin;
-	bool_t do_lock_test;
-	bool_t do_spin_test;
+	bool do_lock_test;
+	bool do_spin_test;
 };
 
 static void lock_test(struct lock_test *test)
@@ -211,8 +212,8 @@ int main(int argc, char *argv[])
 
 	lock_basic_test(&test);
 
-	test.do_lock_test = TRUE;
-	test.do_spin_test = FALSE;
+	test.do_lock_test = true;
+	test.do_spin_test = false;
 	rc = pthread_create(&thread, NULL, lock_test_thread, &test);
 	if (rc != 0) {
 		fprintf(stderr, "Failed to create test thread, error:%d\n", rc);
@@ -228,8 +229,8 @@ int main(int argc, char *argv[])
 		goto out;
 	}
 
-	test.do_lock_test = FALSE;
-	test.do_spin_test = TRUE;
+	test.do_lock_test = false;
+	test.do_spin_test = true;
 	lock_test(&test);
 	pthread_join(thread, NULL);
 

@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <stddef.h>
 #include <stdarg.h>
@@ -30,8 +31,8 @@ struct bench_option {
 		BENCH_OP_WRITE,
 		BENCH_OP_RW,
 	} op;
-	bool_t random;
-	bool_t no_cleanup;
+	bool random;
+	bool no_cleanup;
 	unsigned int cache_capacity;
 	unsigned int nr_threads;
 	unsigned int nr_processes;
@@ -59,18 +60,18 @@ static void print_seperator();
 static void do_bench(bptree_t h, struct shm_bench_data *bench_data, int op);
 
 struct bench_option opts = {
-	12,	// page_bits
-	64*1024,// rounds
-	BENCH_OP_WRITE,	// op
-	FALSE,	// random
-	FALSE,	// no_cleanup
-	0,	// cache_capacity
-	1,	// nr_threads
-	1	// nr_processes
+	.page_bits = 12,	// page_bits
+	.rounds = 64*1024,	// rounds
+	.op = BENCH_OP_WRITE,	// op
+	.random = false,	// random
+	.no_cleanup = false,	// no_cleanup
+	.cache_capacity = 0,	// cache_capacity
+	.nr_threads = 1,	// nr_threads
+	.nr_processes = 1	// nr_processes
 };
 
 /* Per process global data */
-bool_t is_parent = TRUE;
+bool is_parent = true;
 int shmfd = -1;
 const char *shm_name = "/bpt_bench";
 size_t shm_size = 0;
@@ -216,7 +217,7 @@ static void *benchmark_thread(void *arg)
 
 static void bench_prepare_data(struct shm_bench_data *sbd,
 			       int nr_kvs,
-			       bool_t random)
+			       bool random)
 {
 	int i;
 	
@@ -354,7 +355,7 @@ int main(int argc, char *argv[])
 			}
 			break;
 		case 'r':
-			opts.random = TRUE;
+			opts.random = true;
 			break;
 		case 'c':
 			opts.cache_capacity = atoi(optarg);
@@ -378,7 +379,7 @@ int main(int argc, char *argv[])
 			}
 			break;
 		case 'C':
-			opts.no_cleanup = TRUE;
+			opts.no_cleanup = true;
 			break;
 		case 'h':
 		default:
@@ -475,7 +476,7 @@ int main(int argc, char *argv[])
 			/* We are child, go on to wait for
 			 * signal to start benchmarking
 			 */
-			is_parent = FALSE;
+			is_parent = false;
 			break;
 		} else {
 			printf("forked process %d!\n", pid);
