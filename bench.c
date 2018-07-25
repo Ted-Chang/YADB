@@ -516,6 +516,25 @@ int main(int argc, char *argv[])
 		       (opts.nr_processes * opts.nr_threads - 1)) {
 			usleep(10000);
 		}
+
+		/* Notify all threads to start benchmarking. */
+		rc = pthread_mutex_lock(&bench_data->mutex);
+		if (rc != 0) {
+			fprintf(stderr, "Failed to lock bench mutex!\n");
+			goto out;
+		}
+		printf("Ready, GO!\n");
+		clock_gettime(CLOCK_MONOTONIC, &start);
+		rc = pthread_cond_broadcast(&bench_data->cond);
+		if (rc != 0) {
+			fprintf(stderr, "Failed to broadcast bench condition!\n");
+			goto out;
+		}
+		rc = pthread_mutex_unlock(&bench_data->mutex);
+		if (rc != 0) {
+			fprintf(stderr, "Failed to unlock bench mutex!\n");
+			goto out;
+		}
 	} else {
 		/* We are child, waiting for signal to start benchmarking */
 		rc = pthread_mutex_lock(&bench_data->mutex);
@@ -525,13 +544,11 @@ int main(int argc, char *argv[])
 		}
 
 		__sync_add_and_fetch(&bench_data->ready_threads, 1);
-		
 		rc = pthread_cond_wait(&bench_data->cond, &bench_data->mutex);
 		if (rc != 0) {
 			fprintf(stderr, "Failed to wait cond, error:%d\n", rc);
 			goto out;
 		}
-
 		rc = pthread_mutex_unlock(&bench_data->mutex);
 		if (rc != 0) {
 			fprintf(stderr, "Failed to unlock mutex, error:%d\n", rc);
@@ -540,30 +557,6 @@ int main(int argc, char *argv[])
 	}
 
 	printf("thread:%ld benchmarking started...\n", gettid());
-	
-	clock_gettime(CLOCK_MONOTONIC, &start);
-	
-	if (is_parent) {
-		/* Notify all threads to start benchmarking. */
-		rc = pthread_mutex_lock(&bench_data->mutex);
-		if (rc != 0) {
-			fprintf(stderr, "Failed to lock bench mutex!\n");
-			goto out;
-		}
-
-		rc = pthread_cond_broadcast(&bench_data->cond);
-		if (rc != 0) {
-			fprintf(stderr, "Failed to broadcast bench condition!\n");
-			goto out;
-		}
-
-		rc = pthread_mutex_unlock(&bench_data->mutex);
-		if (rc != 0) {
-			fprintf(stderr, "Failed to unlock bench mutex!\n");
-			goto out;
-		}
-	}
-
 	do_bench(h, bench_data, opts.op);
 
 	if (is_parent) {
@@ -593,7 +586,8 @@ int main(int argc, char *argv[])
 
 	/* Only print bench summary in parent process */
 	if (is_parent) {
-		t = ((end.tv_sec - start.tv_sec) * 1e9 + (end.tv_nsec - start.tv_nsec)) / 1e9;
+		t = ((end.tv_sec - start.tv_sec) * 1e9 +
+		     (end.tv_nsec - start.tv_nsec)) / 1e9;
 		
 		printf("Bench summary: \n");
 		print_seperator();

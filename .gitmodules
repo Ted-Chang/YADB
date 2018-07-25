@@ -1,0 +1,3 @@
+[submodule "rbtrace"]
+	path = rbtrace
+	url = https://github.com/Ted-Chang/rbtrace.git
