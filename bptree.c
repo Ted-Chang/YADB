@@ -10,6 +10,7 @@
 #include "bptdef.h"
 #include "bpt_private.h"
 #include "log.h"
+#include "rbtrace.h"
 
 static void bpt_putpageno(unsigned char *dst, pageno_t page_no)
 {
