@@ -37,10 +37,10 @@ static pageno_t bpt_getpageno(unsigned char *src)
 	return page_no;
 }
 
-int keycmp(struct bpt_key *key1, unsigned char *key2, unsigned int len2)
+int keycmp(struct bpt_key *key1, unsigned char *key2, uint32_t len2)
 {
 	int ret;
-	unsigned short len1 = key1->len;
+	uint16_t len1 = key1->len;
 
 	ret = memcmp(key1->key, key2, len1 > len2 ? len2 : len1);
 	if (ret) {
@@ -99,8 +99,8 @@ static int bpt_mapsegment(struct bptree *bpt, struct bpt_pool *pool,
 	return bpt->status;
 }
 
-static void bpt_linklatch(struct bptree *bpt, unsigned short hash_val,
-			  unsigned short victim, pageno_t page_no)
+static void bpt_linklatch(struct bptree *bpt, uint16_t hash_val,
+			  uint16_t victim, pageno_t page_no)
 {
 	struct bpt_latch *latch;
 
@@ -122,11 +122,11 @@ bpt_pinlatch(struct bptree *bpt, pageno_t page_no)
 	struct bpt_latch *latch;
 	struct bpt_mgr *mgr;
 	struct bpt_latch_mgr *latchmgr;
-	unsigned short hashv;
-	unsigned short avail;
-	unsigned short slot;
-	unsigned short victim;
-	unsigned short idx;
+	uint16_t hashv;
+	uint16_t avail;
+	uint16_t slot;
+	uint16_t victim;
+	uint16_t idx;
 
 	latch = NULL;
 	mgr = bpt->mgr;
@@ -264,10 +264,10 @@ static void bpt_unpinlatch(struct bpt_latch *latch)
 }
 
 static void bpt_linkpool(struct bptree *bpt, struct bpt_pool *pool,
-			 pageno_t page_no, int hash_val)
+			 pageno_t page_no, uint32_t hash_val)
 {
 	struct bpt_pool *node;
-	unsigned int slot;
+	uint32_t slot;
 
 	pool->hash_prev = pool->hash_next = NULL;
 	pool->basepage = page_no & ~bpt->mgr->pool_mask;
@@ -286,10 +286,10 @@ static void bpt_linkpool(struct bptree *bpt, struct bpt_pool *pool,
 static
 struct bpt_pool *
 bpt_findpool(struct bptree *bpt, pageno_t page_no,
-	     unsigned int hash_val)
+	     uint32_t hash_val)
 {
 	struct bpt_pool *pool;
-	unsigned int slot;
+	uint32_t slot;
 
 	pool = NULL;
 
@@ -318,10 +318,10 @@ static
 struct bpt_pool *
 bpt_pinpool(struct bptree *bpt, pageno_t page_no)
 {
-	unsigned int slot;
-	unsigned int hashv;
-	unsigned int idx;
-	unsigned int victim;
+	uint32_t slot;
+	uint32_t hashv;
+	uint32_t idx;
+	uint32_t victim;
 	struct bpt_mgr *mgr;
 	struct bpt_pool *pool;
 	struct bpt_pool *node;
@@ -329,7 +329,7 @@ bpt_pinpool(struct bptree *bpt, pageno_t page_no)
 	mgr = bpt->mgr;
 
 	/* Lock the page pool bucket */
-	hashv = (unsigned int)(page_no >> mgr->seg_bits) % mgr->tbl_size;
+	hashv = (uint32_t)(page_no >> mgr->seg_bits) % mgr->tbl_size;
 	spin_wrlock(&mgr->pool_tbl_locks[hashv]);
 
 	/* Lookup the page in hash table, if found just increase
@@ -365,7 +365,7 @@ bpt_pinpool(struct bptree *bpt, pageno_t page_no)
 		victim = __sync_fetch_and_add(&mgr->evicted, 1);
 		victim %= bpt->mgr->pool_max;
 		pool = &bpt->mgr->pools[victim];
-		idx = (unsigned int)(pool->basepage >> mgr->seg_bits) %
+		idx = (uint32_t)(pool->basepage >> mgr->seg_bits) %
 			mgr->tbl_size;
 
 		if (!victim) {
@@ -518,9 +518,9 @@ void bpt_closemgr(struct bpt_mgr *mgr)
  *                        +----+
  */
 struct bpt_mgr *bpt_openmgr(const char *name,
-			    unsigned int page_bits,
-			    unsigned int pool_max,
-			    unsigned int ht_size)
+			    uint32_t page_bits,
+			    uint32_t pool_max,
+			    uint32_t ht_size)
 {
 	int rc = 0;
 	struct bpt_mgr *mgr = NULL;
@@ -529,12 +529,12 @@ struct bpt_mgr *bpt_openmgr(const char *name,
 	struct bpt_key *key = NULL;
 	struct bpt_slot *sptr = NULL;
 	off_t fsize;
-	unsigned int page_size;
-	unsigned int cache_blk;
-	unsigned int last;
-	unsigned int latch_per_page;
-	unsigned int tbl_size;
-	unsigned short nr_latch_pages = 0;
+	uint32_t page_size;
+	uint32_t cache_blk;
+	uint32_t last;
+	uint32_t latch_per_page;
+	uint32_t tbl_size;
+	uint16_t nr_latch_pages = 0;
 	int flags;
 	bpt_level_t level;
 	
@@ -627,7 +627,7 @@ struct bpt_mgr *bpt_openmgr(const char *name,
 	if (mgr->pools == NULL) {
 		goto out;
 	}
-	mgr->pool_tbl = calloc(ht_size, sizeof(unsigned short));
+	mgr->pool_tbl = calloc(ht_size, sizeof(*mgr->pool_tbl));
 	if (mgr->pool_tbl == NULL) {
 		goto out;
 	}
@@ -638,8 +638,7 @@ struct bpt_mgr *bpt_openmgr(const char *name,
 
 	/* Calculate how many pages we need for latches */
 	latch_per_page = mgr->page_size / sizeof(struct bpt_latch);
-	nr_latch_pages = (unsigned short)
-		(BPT_LATCH_TABLE / latch_per_page + 1);
+	nr_latch_pages = (uint16_t)(BPT_LATCH_TABLE / latch_per_page + 1);
 
 	/* File already initialized, map latchmgr and latches directly */
 	if (fsize >= mgr->page_size) {
@@ -660,14 +659,13 @@ struct bpt_mgr *bpt_openmgr(const char *name,
 
 	bpt_bzero(latchmgr, mgr->page_size);
 	latchmgr->nr_latch_pages = nr_latch_pages;
-	latchmgr->nr_latch_total = (unsigned short)
-		(nr_latch_pages * latch_per_page);
+	latchmgr->nr_latch_total = (uint16_t)(nr_latch_pages * latch_per_page);
 	bpt_putpageno(latchmgr->alloc->right,
 		      PAGE_ROOT + MIN_LEVEL + nr_latch_pages);
 
 	/* Calculate how many hash entries can alloc page holds */
-	tbl_size = (unsigned short)((mgr->page_size - sizeof(*latchmgr)) /
-				    sizeof(struct latch_hash_bucket));
+	tbl_size = (uint16_t)((mgr->page_size - sizeof(*latchmgr)) /
+			      sizeof(struct latch_hash_bucket));
 	if (tbl_size > latchmgr->nr_latch_total) {
 		tbl_size = latchmgr->nr_latch_total;
 	}
@@ -899,9 +897,9 @@ int bpt_freepage(struct bptree *bpt, struct bpt_page_set *set)
 	return bpt->status;
 }
 
-unsigned int bpt_findslot(struct bpt_page_set *set,
-			  unsigned char *key,
-			  unsigned int len)
+uint32_t bpt_findslot(struct bpt_page_set *set,
+		      unsigned char *key,
+		      uint32_t len)
 {
 	int slot;
 	int low;
@@ -930,17 +928,17 @@ unsigned int bpt_findslot(struct bpt_page_set *set,
 	return (high > set->page->count) ? 0 : high;
 }
 
-unsigned int bpt_loadpage(struct bptree *bpt,
-			  struct bpt_page_set *set,
-			  unsigned char *key, unsigned int len,
-			  bpt_level_t level, bpt_mode_t lock)
+uint32_t bpt_loadpage(struct bptree *bpt,
+		      struct bpt_page_set *set,
+		      unsigned char *key, uint32_t len,
+		      bpt_level_t level, bpt_mode_t lock)
 {
 	pageno_t page_no;
 	pageno_t prev_page;
 	struct bpt_latch *prev_latch;
 	struct bpt_pool *prev_pool;
 	struct bpt_slot *sptr;
-	unsigned int slot;
+	uint32_t slot;
 	bpt_mode_t mode;
 	bpt_mode_t prev_mode;
 	unsigned char drill;
@@ -1056,17 +1054,18 @@ unsigned int bpt_loadpage(struct bptree *bpt,
 	return 0;
 }
 
-unsigned int bpt_cleanpage(struct bptree *bpt,
-			   struct bpt_page *page,
-			   unsigned int len,
-			   unsigned int slot)
+uint32_t bpt_cleanpage(struct bptree *bpt,
+		       struct bpt_page *page,
+		       uint32_t len,
+		       uint32_t slot)
 {
 	struct bpt_key *key;
-	unsigned int max;
-	unsigned int size;
-	unsigned int newslot;
-	unsigned int i, count;
-	unsigned int next;
+	uint32_t max;
+	uint32_t size;
+	uint32_t newslot;
+	uint32_t i;
+	uint32_t count;
+	uint32_t next;
 
 	max = page->count;
 	newslot = slot;
@@ -1128,7 +1127,7 @@ int bpt_splitroot(struct bptree *bpt, struct bpt_page_set *root,
 		  unsigned char *leftkey, pageno_t page_no2)
 {
 	pageno_t left;
-	unsigned int next;
+	uint32_t next;
 
 	next = bpt->mgr->page_size;
 
@@ -1176,10 +1175,10 @@ int bpt_splitpage(struct bptree *bpt, struct bpt_page_set *set)
 	struct bpt_mgr *mgr;
 	struct bpt_key *key;
 	struct bpt_page_set right;
-	unsigned int max;
-	unsigned int count;
-	unsigned int i;
-	unsigned int next;
+	uint32_t max;
+	uint32_t count;
+	uint32_t i;
+	uint32_t next;
 	bpt_level_t level;
 	unsigned char fencekey[257];
 	unsigned char rightkey[257];
@@ -1294,14 +1293,14 @@ int bpt_splitpage(struct bptree *bpt, struct bpt_page_set *set)
 }
 
 int bpt_insertkey(bptree_t h, unsigned char *key,
-		  unsigned int len, bpt_level_t level,
+		  uint32_t len, bpt_level_t level,
 		  pageno_t page_no)
 {
 	struct bptree *bpt;
 	struct bpt_key *ptr;
 	struct bpt_page_set set;
-	unsigned int slot;
-	unsigned int i;
+	uint32_t slot;
+	uint32_t i;
 
 	bpt = (struct bptree *)h;
 
@@ -1383,9 +1382,9 @@ int bpt_insertkey(bptree_t h, unsigned char *key,
 }
 
 pageno_t bpt_findkey(bptree_t h, unsigned char *key,
-		     unsigned int len)
+		     uint32_t len)
 {
-	unsigned int slot;
+	uint32_t slot;
 	struct bptree *bpt;
 	struct bpt_key *ptr;
 	struct bpt_page_set set;
@@ -1450,7 +1449,7 @@ int bpt_fixfence(struct bptree *bpt,
 int bpt_collapseroot(struct bptree *bpt, struct bpt_page_set *root)
 {
 	struct bpt_page_set child;
-	unsigned int i;
+	uint32_t i;
 
 	/* Find child entry and promote to new root */
 	do {
@@ -1491,12 +1490,12 @@ int bpt_collapseroot(struct bptree *bpt, struct bpt_page_set *root)
 }
 
 int bpt_deletekey(bptree_t h, unsigned char *key,
-		  unsigned int len, bpt_level_t level)
+		  uint32_t len, bpt_level_t level)
 {
 	struct bptree *bpt;
 	struct bpt_key *ptr;
-	unsigned int slot;
-	unsigned int i;
+	uint32_t slot;
+	uint32_t i;
 	struct bpt_page_set right;
 	struct bpt_page_set set;
 	bool fence = false;
@@ -1638,7 +1637,7 @@ int bpt_deletekey(bptree_t h, unsigned char *key,
 	return bpt->status;
 }
 
-struct bpt_key *bpt_key(bptree_t h, unsigned int slot)
+struct bpt_key *bpt_key(bptree_t h, uint32_t slot)
 {
 	struct bptree *bpt;
 	
@@ -1647,12 +1646,12 @@ struct bpt_key *bpt_key(bptree_t h, unsigned int slot)
 	return keyptr(bpt->cursor, slot);
 }
 
-unsigned int bpt_firstkey(bptree_t h, unsigned char *key,
-			  unsigned int len)
+uint32_t bpt_firstkey(bptree_t h, unsigned char *key,
+		      uint32_t len)
 {
 	struct bptree *bpt;
 	struct bpt_page_set set;
-	unsigned int slot;
+	uint32_t slot;
 
 	bpt = (struct bptree *)h;
 	
@@ -1671,7 +1670,7 @@ unsigned int bpt_firstkey(bptree_t h, unsigned char *key,
 	return slot;
 }
 
-unsigned int bpt_nextkey(bptree_t h, unsigned int slot)
+uint32_t bpt_nextkey(bptree_t h, uint32_t slot)
 {
 	struct bptree *bpt;
 	struct bpt_page_set set;
@@ -1744,7 +1743,7 @@ void bpt_getiostat(bptree_t h, struct bpt_iostat *iostat)
 
 void dump_key(struct bpt_key *k)
 {
-	unsigned int i;
+	uint32_t i;
 
 	for (i = 0; i < k->len; i++) {
 		printf("%c", k->key[i]);
@@ -1797,7 +1796,7 @@ void dump_bpt_page(struct bpt_page *page)
 }
 
 static int dbg_load_page(int fd, struct bpt_page *page,
-			 unsigned int page_size,
+			 uint32_t page_size,
 			 pageno_t page_no)
 {
 	int rc = 0;
@@ -1816,7 +1815,7 @@ static int dbg_load_page(int fd, struct bpt_page *page,
 }
 
 void dump_free_page_list(int fd, struct bpt_page *alloc,
-			 unsigned int page_size)
+			 uint32_t page_size)
 {
 	int rc = 0;
 	struct bpt_page *page;
@@ -1863,13 +1862,13 @@ int main(int argc, char *argv[])
 	char *key1 = "test1";
 	char *key2 = "test2";
 	char *key3 = "test3";
-	unsigned int key1_len = strlen(key1);
-	unsigned int key2_len = strlen(key2);
-	unsigned int key3_len = strlen(key3);
-	unsigned int slot;
+	uint32_t key1_len = strlen(key1);
+	uint32_t key2_len = strlen(key2);
+	uint32_t key3_len = strlen(key3);
+	uint32_t slot;
 	int i;
 	char key[9];
-	unsigned int key_len = sizeof(key);
+	uint32_t key_len = sizeof(key);
 
 	mgr = bpt_openmgr(path, BPT_MIN_PAGE_SHIFT, 128, 13);
 	if (mgr == NULL) {
@@ -1884,7 +1883,8 @@ int main(int argc, char *argv[])
 	}
 
 	bpt = (struct bptree *)h;
-	
+
+	printf("inserting key1 key3 key2...\n");
 	rc = bpt_insertkey(bpt, (unsigned char *)key1, key1_len, 0, 5);
 	if (rc != 0) {
 		fprintf(stderr, "Failed to insert key: %s\n", key1);
@@ -1902,7 +1902,9 @@ int main(int argc, char *argv[])
 		fprintf(stderr, "Failed to insert key: %s\n", key2);
 		goto out;
 	}
+	printf("done\n");
 
+	printf("finding key2...\n");
 	page_no = bpt_findkey(bpt, (unsigned char *)key2, key2_len);
 	if (page_no == 0) {
 		fprintf(stderr, "Page not found for key: %s\n", key2);
@@ -1911,6 +1913,7 @@ int main(int argc, char *argv[])
 		printf("key %s mapped to page 0x%llx\n", key2, page_no);
 	}
 
+	printf("deleting key2...\n");
 	rc = bpt_deletekey(bpt, (unsigned char *)key2, key2_len, 0);
 	if (rc != 0) {
 		fprintf(stderr, "Failed to delete key: %s\n", key2);
@@ -1932,6 +1935,7 @@ int main(int argc, char *argv[])
 		fprintf(stderr, "Nonexistent key found!\n");
 		goto out;
 	}
+	printf("done\n");
 
 	for (i = 0; i < 512; i++) {
 		ret = sprintf(key, "%08x", i);
@@ -1958,6 +1962,7 @@ int main(int argc, char *argv[])
 		fprintf(stderr, "Failed to iterate key: %s\n", key);
 		goto out;
 	}
+	printf("done\n");
 
 	for (i = 511; i >= 0; i--) {
 		ret = sprintf(key, "%08x", i);

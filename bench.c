@@ -20,11 +20,11 @@
 struct key_value {
 	unsigned char len;
 	char key[64];
-	unsigned long long value;
+	uint64_t value;
 };
 
 struct bench_option {
-	unsigned int page_bits;
+	uint32_t page_bits;
 	int rounds;
 	enum {
 		BENCH_OP_READ,
@@ -33,17 +33,17 @@ struct bench_option {
 	} op;
 	bool random;
 	bool no_cleanup;
-	unsigned int cache_capacity;
-	unsigned int nr_threads;
-	unsigned int nr_processes;
+	uint32_t cache_capacity;
+	uint32_t nr_threads;
+	uint32_t nr_processes;
 };
 
 struct shm_bench_data {
-	unsigned int ready_threads;
+	uint32_t ready_threads;
 	pthread_mutex_t mutex;
 	pthread_cond_t cond;
-	unsigned int index;
-	unsigned int nr_kvs;
+	uint32_t index;
+	uint32_t nr_kvs;
 	struct key_value kvs[0];
 };
 
@@ -159,10 +159,10 @@ static void bench_sig_handler(const int sig)
 
 static void dump_bpt_iostat(struct bpt_iostat *iostat)
 {
-	printf("pool maps    : %lld\n", iostat->pool_maps);
-	printf("pool unmaps  : %lld\n", iostat->pool_unmaps);
-	printf("latch hits   : %lld\n", iostat->latch_hits);
-	printf("latch evicts : %lld\n", iostat->latch_evicts);
+	printf("pool maps    : %ld\n", iostat->pool_maps);
+	printf("pool unmaps  : %ld\n", iostat->pool_unmaps);
+	printf("latch hits   : %ld\n", iostat->latch_hits);
+	printf("latch evicts : %ld\n", iostat->latch_evicts);
 }
 
 static void *benchmark_thread(void *arg)
@@ -288,7 +288,7 @@ static void bench_cleanup_data(bptree_t h,
 static void do_bench(bptree_t h, struct shm_bench_data *sbd, int op)
 {
 	int rc;
-	unsigned int i;
+	uint32_t i;
 	pageno_t page_no;
 	
 	while ((i = __sync_add_and_fetch(&sbd->index, 1)) < sbd->nr_kvs) {

@@ -24,9 +24,9 @@
 
 struct bpt_super_block {
 	char magic[16];
-	unsigned int major;
-	unsigned int minor;
-	unsigned int page_bits;
+	uint32_t major;
+	uint32_t minor;
+	uint32_t page_bits;
 };
 
 typedef enum {
@@ -38,14 +38,14 @@ typedef enum {
 } bpt_mode_t;
 
 struct bpt_slot {
-	unsigned int offset:BPT_MAX_PAGE_SHIFT;	// page offset for the key
-	unsigned int dead:1;	// set for deleted key
-	unsigned int reserved:17;
-	unsigned char page_no[PAGE_NUM_BYTES]; // child page associated with slot
+	uint32_t offset:BPT_MAX_PAGE_SHIFT;	// page offset for the key
+	uint32_t dead:1;			// set for deleted key
+	uint32_t reserved:17;			// reserved bits
+	unsigned char page_no[PAGE_NUM_BYTES];  // child page associated with slot
 };
 
 struct bpt_key {
-	unsigned char len;
+	uint8_t len;
 	unsigned char key[0];
 };
 
@@ -61,17 +61,16 @@ struct bpt_latch {
 	struct rwlock parent;	// parent update lock
 	struct rwlock access;	// access intent/page delete
 	struct spin_rwlock busy;
-	volatile unsigned short prev;	// prev entry in hash table chain
-	volatile unsigned short next;	// next entry in hash table chain
-	volatile unsigned short pin;	// number of outstanding locks
-	volatile unsigned short hashv;	// hash value
-	volatile pageno_t page_no;	// latch page number
+	volatile uint16_t prev;	// prev entry in hash table chain
+	volatile uint16_t next;	// next entry in hash table chain
+	volatile uint16_t pin;	// number of outstanding locks
+	volatile uint16_t hashv;// hash value
+	volatile pageno_t page_no;// latch page number
 };
 
 struct latch_hash_bucket {
 	struct spin_rwlock lock;
-	/* head of the latch hash bucket */
-	volatile unsigned short slot;
+	volatile uint16_t slot;	// head of the latch hash bucket
 };
 
 /* b+tree page layout
@@ -91,13 +90,13 @@ struct latch_hash_bucket {
  * +---------------------+      -
  */
 struct bpt_page {
-	unsigned int count;	// number of keys in page
-	unsigned int active;	// number of active keys
-	unsigned int min;	// next key offset
-	unsigned char free:1;	// page is on free list
-	unsigned char kill:1;	// page is being deleted
-	unsigned char dirty:1;	// page is dirty
-	unsigned char reserved:5;
+	uint32_t count;		// number of keys in page
+	uint32_t active;	// number of active keys
+	uint32_t min;		// next key offset
+	uint8_t free:1;		// page is on free list
+	uint8_t kill:1;		// page is being deleted
+	uint8_t dirty:1;	// page is dirty
+	uint8_t reserved:5;	// reserved bits
 	bpt_level_t level;	// page level in the tree
 	unsigned char right[PAGE_NUM_BYTES]; // Next page number
 };
@@ -106,8 +105,8 @@ struct bpt_page {
 struct bpt_pool {
 	pageno_t basepage;	// mapped base pageno
 	char *map;		// mapped memory pointer
-	unsigned short slot;
-	unsigned short pin;	// mapped page pin counter
+	uint16_t slot;
+	uint16_t pin;		// mapped page pin counter
 	struct bpt_pool *hash_prev;
 	struct bpt_pool *hash_next;
 };
@@ -136,18 +135,18 @@ struct bpt_latch_mgr {
 	struct bpt_page alloc[2];
 	struct bpt_iostat iostat;// I/O statistics info
 	struct spin_rwlock lock;
-	unsigned short latch_deployed;
-	unsigned short nr_latch_pages;
-	unsigned short nr_latch_total;
-	unsigned short victim;
-	unsigned short tbl_size;
+	uint16_t latch_deployed;
+	uint16_t nr_latch_pages;
+	uint16_t nr_latch_total;
+	uint16_t victim;
+	uint16_t tbl_size;
 	struct latch_hash_bucket latch_tbl[0];
 };
 
 struct bpt_mgr {
-	unsigned int page_size;
-	unsigned int page_bits;
-	unsigned int seg_bits;	// segment size in pages in bits
+	uint32_t page_size;
+	uint32_t page_bits;
+	uint32_t seg_bits;	// segment size in pages in bits
 	int fd;			// index file descriptor
 
 	int pool_cnt;		// current number of page pool
@@ -156,8 +155,8 @@ struct bpt_mgr {
 	int tbl_size;		// size of page segments pool hash table
 
 	/* last evicted pool hash table entry */
-	volatile unsigned int evicted;
-	unsigned short *pool_tbl;// hash table for page segments pool
+	volatile uint32_t evicted;
+	uint16_t *pool_tbl;	// hash table for page segments pool
 
 	/* locks for pool hash table */
 	struct spin_rwlock *pool_tbl_locks;

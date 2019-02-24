@@ -3,6 +3,10 @@
 
 #include <pthread.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 struct rwlock {
 	pthread_rwlock_t rwlock;
 };
@@ -27,5 +31,9 @@ extern void spin_wrlock(struct spin_rwlock *lock);
 extern void spin_rdunlock(struct spin_rwlock *lock);
 extern void spin_wrunlock(struct spin_rwlock *lock);
 extern int spin_trywrlock(struct spin_rwlock *lock);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif	/* __LOCK_H__ */
