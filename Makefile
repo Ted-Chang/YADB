@@ -2,15 +2,15 @@
 CFLAGS = -Wall -g -fstack-protector -I./rbtrace/include
 CC = gcc
 
-all: bptest bench lktest yadb
+all: db_test db_bench lktest yadb
 
 lktest:
 	$(CC) $(CFLAGS) -D_LOCK_UNITTEST lock.c -lpthread -o lktest
 
-bptest:
-	$(CC) $(CFLAGS) -D_BPT_UNITTEST bptree.c lock.c -lpthread -o bptest
+db_test:
+	$(CC) $(CFLAGS) -D_BPT_UNITTEST bptree.c lock.c -lpthread -o $@
 
-bench:
+db_bench:
 	$(CC) $(CFLAGS) bptree.c lock.c bench.c -lpthread -lrt -o $@
 
 librbtrace:
@@ -21,8 +21,8 @@ yadb: librbtrace
 
 check:
 	rm bpt.dat -f
-	valgrind ./bptest
+	valgrind ./db_test
 
 clean:
-	rm -rf *.o bptest bench lktest yadb rbtrace/*.o rbtrace/*.a
+	rm -rf *.o db_test db_bench lktest yadb rbtrace/*.o rbtrace/*.a
 

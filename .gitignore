@@ -1,2 +1,10 @@
-*.o
 !.gitignore
+# Binaries
+yadb
+lktest
+db_test
+db_bench
+# cscope index
+cscope.out
+# generated files
+*.o
