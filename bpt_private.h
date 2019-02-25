@@ -173,7 +173,7 @@ struct bpt_mgr {
 /* b+tree handle */
 struct bptree {
 	struct bpt_mgr *mgr;	// b+tree manager
-	int status;		// status of last operation
+	int error;		// last operation error code
 	pageno_t cursor_page;	// current cursor page number
 	struct bpt_page *cursor;// cached frame for first/next
 	struct bpt_page *frame;	// spare frame for page split

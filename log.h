@@ -10,7 +10,7 @@
 #define ERR	0x00000008
 
 /* Default trace level */
-unsigned int _bpt_trace_level = INF;
+uint32_t _bpt_trace_level = INF;
 
 #define LOG(_lvl_, _fmt_, ...)						\
 	do {								\

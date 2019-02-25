@@ -12,7 +12,7 @@
 #include "log.h"
 #include "rbtrace.h"
 
-static void bpt_putpageno(unsigned char *dst, pageno_t page_no)
+static void bpt_setpageno(unsigned char *dst, pageno_t page_no)
 {
 	int i = PAGE_NUM_BYTES;
 
@@ -61,9 +61,9 @@ bpt_page(struct bptree *bpt, struct bpt_pool *pool,
 	 pageno_t page_no)
 {
 	struct bpt_page *page;
-	unsigned int subpage;
+	uint32_t subpage;
 
-	subpage = (unsigned int)(page_no & bpt->mgr->pool_mask);
+	subpage = (uint32_t)(page_no & bpt->mgr->pool_mask);
 	page = (struct bpt_page *)(pool->map + (subpage << bpt->mgr->page_bits));
 
 	return page;
@@ -84,19 +84,19 @@ static int bpt_mapsegment(struct bptree *bpt, struct bpt_pool *pool,
 	off_t offset;
 	int flags;
 
-	bpt->status = 0;
+	bpt->error = 0;
 	offset = (page_no & ~bpt->mgr->pool_mask) << bpt->mgr->page_bits;
 
 	flags = PROT_READ | PROT_WRITE;
 	pool->map = mmap(NULL, (bpt->mgr->pool_mask + 1) << bpt->mgr->page_bits,
 			 flags, MAP_SHARED, bpt->mgr->fd, offset);
 	if (pool->map == MAP_FAILED) {
-		bpt->status = -1;
+		bpt->error = -1;
 	} else {
 		__sync_fetch_and_add(&bpt->mgr->latchmgr->iostat.pool_maps, 1);
 	}
 
-	return bpt->status;
+	return bpt->error;
 }
 
 static void bpt_linklatch(struct bptree *bpt, uint16_t hash_val,
@@ -349,6 +349,8 @@ bpt_pinpool(struct bptree *bpt, pageno_t page_no)
 		pool->slot = slot;
 
 		if (bpt_mapsegment(bpt, pool, page_no)) {
+			LOG(ERR, "Failed to map seg for page(0x%llx), "
+			    "error:%d\n", page_no, bpt->error);
 			pool = NULL;
 			goto out;
 		}
@@ -365,8 +367,7 @@ bpt_pinpool(struct bptree *bpt, pageno_t page_no)
 		victim = __sync_fetch_and_add(&mgr->evicted, 1);
 		victim %= bpt->mgr->pool_max;
 		pool = &bpt->mgr->pools[victim];
-		idx = (uint32_t)(pool->basepage >> mgr->seg_bits) %
-			mgr->tbl_size;
+		idx = (uint32_t)(pool->basepage >> mgr->seg_bits) % mgr->tbl_size;
 
 		if (!victim) {
 			continue;
@@ -405,6 +406,8 @@ bpt_pinpool(struct bptree *bpt, pageno_t page_no)
 
 		/* Create new pool mapping and link into hash table */
 		if (bpt_mapsegment(bpt, pool, page_no)) {
+			LOG(ERR, "Failed to map seg for page(0x%llx), "
+			    "error:%d\n", page_no, bpt->error);
 			pool = NULL;
 			goto out;
 		}
@@ -536,7 +539,7 @@ struct bpt_mgr *bpt_openmgr(const char *name,
 	uint32_t tbl_size;
 	uint16_t nr_latch_pages = 0;
 	int flags;
-	bpt_level_t level;
+	bpt_level_t level = 0;
 	
 	if (page_bits > BPT_MAX_PAGE_SHIFT ||
 	    page_bits < BPT_MIN_PAGE_SHIFT) {
@@ -645,7 +648,7 @@ struct bpt_mgr *bpt_openmgr(const char *name,
 		goto map_latches;
 	}
 
-	/* Write super block */
+	/* Write super block to 1st page */
 	sb = (struct bpt_super_block *)latchmgr;
 	strcpy(sb->magic, BPT_MAGIC);
 	sb->major = BPT_MAJOR;
@@ -660,7 +663,7 @@ struct bpt_mgr *bpt_openmgr(const char *name,
 	bpt_bzero(latchmgr, mgr->page_size);
 	latchmgr->nr_latch_pages = nr_latch_pages;
 	latchmgr->nr_latch_total = (uint16_t)(nr_latch_pages * latch_per_page);
-	bpt_putpageno(latchmgr->alloc->right,
+	bpt_setpageno(latchmgr->alloc[0].right,
 		      PAGE_ROOT + MIN_LEVEL + nr_latch_pages);
 
 	/* Calculate how many hash entries can alloc page holds */
@@ -672,9 +675,10 @@ struct bpt_mgr *bpt_openmgr(const char *name,
 
 	latchmgr->tbl_size = tbl_size;
 
-	/* Write latchmgr, i.e. 2 alloc pages and latchmgr info */
+	/* Write latchmgr info to 2nd page */
 	if (write(mgr->fd, latchmgr, mgr->page_size) < mgr->page_size) {
-		LOG(ERR, "write latchmgr, %d bytes failed\n", mgr->page_size);
+		LOG(ERR, "write latchmgr, %d bytes failed\n",
+		    mgr->page_size);
 		rc = -1;
 		goto out;
 	}
@@ -682,6 +686,7 @@ struct bpt_mgr *bpt_openmgr(const char *name,
 	/* Top to down initialization of empty b+tree with only root
 	 * page and leaf page.
 	 */
+	bpt_bzero(latchmgr, mgr->page_size);
 	for (level = MIN_LEVEL; level--; ) {
 		sptr = slotptr(latchmgr->alloc, 1);
 		sptr->offset = mgr->page_size - STOPPER_KEY_LEN;
@@ -689,7 +694,7 @@ struct bpt_mgr *bpt_openmgr(const char *name,
 		/* For empty b+tree the child node of root is PAGE_LEAF,
 		 * the child node of PAGE_LEAF is 0
 		 */
-		bpt_putpageno(sptr->page_no,
+		bpt_setpageno(sptr->page_no,
 			      level ? MIN_LEVEL - level + PAGE_ROOT : 0);
 		
 		/* Create stopper key */
@@ -698,10 +703,11 @@ struct bpt_mgr *bpt_openmgr(const char *name,
 		key->key[0] = 0xFF;
 		key->key[1] = 0xFF;
 
-		latchmgr->alloc->min = mgr->page_size - STOPPER_KEY_LEN;
-		latchmgr->alloc->level = level;
-		latchmgr->alloc->count = 1;
-		latchmgr->alloc->active = 1;
+		/* Fill page head */
+		latchmgr->alloc[0].min = sptr->offset;
+		latchmgr->alloc[0].level = level;
+		latchmgr->alloc[0].count = 1;
+		latchmgr->alloc[0].active = 1;
 
 		if (write(mgr->fd, latchmgr, mgr->page_size) < mgr->page_size) {
 			LOG(ERR, "write page, level %d failed\n", level);
@@ -828,15 +834,15 @@ pageno_t bpt_newpage(struct bptree *bpt, struct bpt_page *page)
 		}
 
 		set.page = bpt_page(bpt, set.pool, new_page);
-		bpt_putpageno(mgr->latchmgr->alloc[1].right,
+		bpt_setpageno(mgr->latchmgr->alloc[1].right,
 			      bpt_getpageno(set.page->right));
 		bpt_unpinpool(set.pool);
 		reuse = true;
 		LOG(DBG, "reuse free page(0x%llx)\n", new_page);
 	} else {
 		/* Alloc page always point to the tail page. */
-		new_page = bpt_getpageno(mgr->latchmgr->alloc->right);
-		bpt_putpageno(mgr->latchmgr->alloc->right, new_page+1);
+		new_page = bpt_getpageno(mgr->latchmgr->alloc[0].right);
+		bpt_setpageno(mgr->latchmgr->alloc[0].right, new_page+1);
 		reuse = false;
 		LOG(DBG, "allocating new page(0x%llx)\n", new_page);
 	}
@@ -844,6 +850,8 @@ pageno_t bpt_newpage(struct bptree *bpt, struct bpt_page *page)
 	bytes = pwrite(mgr->fd, page, mgr->page_size,
 		       new_page << mgr->page_bits);
 	if (bytes < mgr->page_size) {
+		bpt->error = -1;
+		LOG(ERR, "page(0x%llx) pwrite failed\n", new_page);
 		new_page = 0;
 		goto out;
 	}
@@ -858,9 +866,10 @@ pageno_t bpt_newpage(struct bptree *bpt, struct bpt_page *page)
 		bytes = pwrite(mgr->fd, bpt->zero, mgr->page_size,
 			       (new_page|mgr->pool_mask) << mgr->page_bits);
 		if (bytes < mgr->page_size) {
-			LOG(ERR, "page(0x%llx) pwrite failed\n", new_page);
+			LOG(ERR, "page(0x%llx) pwrite failed\n",
+			    new_page|mgr->pool_mask);
 			new_page = 0;
-			bpt->status = -1;
+			bpt->error = -1;
 			goto out;
 		}
 	}
@@ -879,9 +888,9 @@ int bpt_freepage(struct bptree *bpt, struct bpt_page_set *set)
 	 * in second alloc page.
 	 * alloc[1] -> page_no -> ...  -> free page -> 0
 	 */
-	bpt_putpageno(set->page->right,
+	bpt_setpageno(set->page->right,
 		      bpt_getpageno(bpt->mgr->latchmgr->alloc[1].right));
-	bpt_putpageno(bpt->mgr->latchmgr->alloc[1].right, set->page_no);
+	bpt_setpageno(bpt->mgr->latchmgr->alloc[1].right, set->page_no);
 	set->page->free = 1;
 
 	/* Unlock the page for write and delete */
@@ -894,7 +903,7 @@ int bpt_freepage(struct bptree *bpt, struct bpt_page_set *set)
 
 	LOG(DBG, "page(0x%llx) freed\n", set->page_no);
 
-	return bpt->status;
+	return bpt->error;
 }
 
 uint32_t bpt_findslot(struct bpt_page_set *set,
@@ -975,7 +984,7 @@ uint32_t bpt_loadpage(struct bptree *bpt,
 		bpt_lockpage(set->latch, mode);
 
 		if (set->page->free) {
-			bpt->status = -1;
+			bpt->error = -1;
 			goto out;
 		}
 
@@ -990,7 +999,7 @@ uint32_t bpt_loadpage(struct bptree *bpt,
 			if (set->page_no != PAGE_ROOT) {
 				LOG(ERR, "page(0x%llx) illegal lvl(%d), drill(%d)\n",
 				    set->page_no, set->page->level, drill);
-				bpt->status = -1;
+				bpt->error = -1;
 				goto out;
 			}
 
@@ -1049,7 +1058,7 @@ uint32_t bpt_loadpage(struct bptree *bpt,
 	} while (page_no);
 
 	LOG(ERR, "Key not found\n");
-	bpt->status = -1;
+	bpt->error = -1;
  out:
 	return 0;
 }
@@ -1143,7 +1152,7 @@ int bpt_splitroot(struct bptree *bpt, struct bpt_page_set *root,
 	 */
 	next -= leftkey[0] + 1;
 	memcpy(((char *)root->page) + next, leftkey, leftkey[0] + 1);
-	bpt_putpageno(slotptr(root->page, 1)->page_no, left);
+	bpt_setpageno(slotptr(root->page, 1)->page_no, left);
 	slotptr(root->page, 1)->offset = next;
 
 	/* Insert stopper key and link new page as right child */
@@ -1151,10 +1160,10 @@ int bpt_splitroot(struct bptree *bpt, struct bpt_page_set *root,
 	((unsigned char *)root->page)[next] = 2;
 	((unsigned char *)root->page)[next+1] = 0xFF;
 	((unsigned char *)root->page)[next+2] = 0xFF;
-	bpt_putpageno(slotptr(root->page, 2)->page_no, page_no2);
+	bpt_setpageno(slotptr(root->page, 2)->page_no, page_no2);
 	slotptr(root->page, 2)->offset = next;
 
-	bpt_putpageno(root->page->right, 0);
+	bpt_setpageno(root->page->right, 0);
 	root->page->min = next;
 	root->page->count = 2;
 	root->page->active = 2;
@@ -1167,7 +1176,7 @@ int bpt_splitroot(struct bptree *bpt, struct bpt_page_set *root,
 	LOG(DBG, "root splitted, page_no2(0x%llx)\n", page_no2);
 
  out:
-	return bpt->status;
+	return bpt->error;
 }
 
 int bpt_splitpage(struct bptree *bpt, struct bpt_page_set *set)
@@ -1190,7 +1199,6 @@ int bpt_splitpage(struct bptree *bpt, struct bpt_page_set *set)
 	/* Split higher half of keys to bpt->frame */
 	bpt_bzero(bpt->frame, mgr->page_size);
 	max = set->page->count;
-
 	count = 0;
 	next = mgr->page_size;
 	for (i = max/2 + 1; i <= max; i++) {
@@ -1217,7 +1225,7 @@ int bpt_splitpage(struct bptree *bpt, struct bpt_page_set *set)
 	bpt->frame->count = count;
 	bpt->frame->level = level;
 
-	/* Link right node */
+	/* Link new node to right node */
 	if (set->page_no > PAGE_ROOT) {
 		memcpy(bpt->frame->right, set->page->right, PAGE_NUM_BYTES);
 	}
@@ -1232,7 +1240,6 @@ int bpt_splitpage(struct bptree *bpt, struct bpt_page_set *set)
 	bpt_bzero(set->page + 1, mgr->page_size - sizeof(*set->page));
 	set->page->dirty = 0;
 	set->page->active = 0;
-
 	count = 0;
 	next = mgr->page_size;
 	for (i = 1; i <= max/2; i++) {
@@ -1252,7 +1259,8 @@ int bpt_splitpage(struct bptree *bpt, struct bpt_page_set *set)
 	/* Remember fence key for old page */
 	memcpy(fencekey, key, key->len + 1);
 
-	bpt_putpageno(set->page->right, right.page_no);
+	/* Link old node to new node */
+	bpt_setpageno(set->page->right, right.page_no);
 	set->page->min = next;
 	set->page->count = count;
 
@@ -1289,7 +1297,7 @@ int bpt_splitpage(struct bptree *bpt, struct bpt_page_set *set)
 	    set->page_no, right.page_no);
 
  out:
-	return bpt->status;
+	return bpt->error;
 }
 
 int bpt_insertkey(bptree_t h, unsigned char *key,
@@ -1309,10 +1317,10 @@ int bpt_insertkey(bptree_t h, unsigned char *key,
 					 BPT_LOCK_WRITE))) {
 			ptr = keyptr(set.page, slot);
 		} else {
-			LOG(ERR, "Failed to load page, level(%d), page(0x%llx)\n",
-			    level, page_no);
-			if (bpt->status == 0) {
-				bpt->status = -1;
+			LOG(ERR, "Failed to load page(0x%llx), level(%d), "
+			    "error:%d\n", page_no, level, bpt->error);
+			if (bpt->error == 0) {
+				bpt->error = -1;
 			}
 			goto out;
 		}
@@ -1325,10 +1333,10 @@ int bpt_insertkey(bptree_t h, unsigned char *key,
 				set.page->active++;
 			}
 			slotptr(set.page, slot)->dead = 0;
-			bpt_putpageno(slotptr(set.page, slot)->page_no, page_no);
+			bpt_setpageno(slotptr(set.page, slot)->page_no, page_no);
 			LOG(DBG, "Key updated, level(%d), curr-page(0x%llx), "
 			    "page(0x%llx)\n", level, set.page_no, page_no);
-			bpt->status = 0;
+			bpt->error = 0;
 			goto unlock_page;
 		}
 
@@ -1367,7 +1375,7 @@ int bpt_insertkey(bptree_t h, unsigned char *key,
 		*slotptr(set.page, i) = *slotptr(set.page, i - 1);
 	}
 
-	bpt_putpageno(slotptr(set.page, slot)->page_no, page_no);
+	bpt_setpageno(slotptr(set.page, slot)->page_no, page_no);
 	slotptr(set.page, slot)->offset = set.page->min;
 	slotptr(set.page, slot)->dead = 0;
 
@@ -1378,7 +1386,7 @@ int bpt_insertkey(bptree_t h, unsigned char *key,
 	bpt_unpinpool(set.pool);
 
  out:
-	return bpt->status;
+	return bpt->error;
 }
 
 pageno_t bpt_findkey(bptree_t h, unsigned char *key,
@@ -1443,7 +1451,7 @@ int bpt_fixfence(struct bptree *bpt,
 	bpt_unpinpool(set->pool);
 
  out:
-	return bpt->status;
+	return bpt->error;
 }
 
 int bpt_collapseroot(struct bptree *bpt, struct bpt_page_set *root)
@@ -1486,7 +1494,7 @@ int bpt_collapseroot(struct bptree *bpt, struct bpt_page_set *root)
 	LOG(DBG, "root collapsed, child(0x%llx) freed\n", child.page_no);
 
  out:
-	return bpt->status;
+	return bpt->error;
 }
 
 int bpt_deletekey(bptree_t h, unsigned char *key,
@@ -1505,7 +1513,7 @@ int bpt_deletekey(bptree_t h, unsigned char *key,
 	unsigned char higherkey[257];
 
 	bpt = (struct bptree *)h;
-	bpt->status = 0;
+	bpt->error = 0;
 
 	if ((slot = bpt_loadpage(bpt, &set, key, len, level, BPT_LOCK_WRITE))) {
 		ptr = keyptr(set.page, slot);
@@ -1588,7 +1596,7 @@ int bpt_deletekey(bptree_t h, unsigned char *key,
 
 	if (right.page->kill) {
 		LOG(ERR, "page(0x%llx) killed\n", right.page_no);
-		bpt->status = -1;
+		bpt->error = -1;
 		goto out;
 	}
 
@@ -1598,7 +1606,7 @@ int bpt_deletekey(bptree_t h, unsigned char *key,
 	memcpy(higherkey, ptr, ptr->len + 1);
 
 	/* Mark right page as deleted */
-	bpt_putpageno(right.page->right, set.page_no);
+	bpt_setpageno(right.page->right, set.page_no);
 	right.page->kill = 1;
 
 	bpt_lockpage(right.latch, BPT_LOCK_PARENT);
@@ -1634,7 +1642,7 @@ int bpt_deletekey(bptree_t h, unsigned char *key,
  foundkey:
 	bpt->found = found;
  out:
-	return bpt->status;
+	return bpt->error;
 }
 
 struct bpt_key *bpt_key(bptree_t h, uint32_t slot)
@@ -1681,15 +1689,17 @@ uint32_t bpt_nextkey(bptree_t h, uint32_t slot)
 	do {
 		right = bpt_getpageno(bpt->cursor->right);
 
-		for (slot++; slot <= bpt->cursor->count; slot++) {
+		slot++;
+		for (; slot <= bpt->cursor->count; slot++) {
 			if (slotptr(bpt->cursor, slot)->dead) {
+				/* Skip dead key */
 				continue;
 			} else if (right || (slot < bpt->cursor->count)) {
+				return slot;
+			} else {
 				/* If no next page then the last slot
 				 * is stopper key, don't return it.
 				 */
-				return slot;
-			} else {
 				break;
 			}
 		}
@@ -1698,12 +1708,14 @@ uint32_t bpt_nextkey(bptree_t h, uint32_t slot)
 		if (right == 0) {
 			break;
 		}
-		
-		bpt->cursor_page = right;
 
+		/* Load next page into cursor page */
+		bpt->cursor_page = right;
 		if ((set.pool = bpt_pinpool(bpt, right))) {
 			set.page = bpt_page(bpt, set.pool, right);
 		} else {
+			LOG(WRN, "Failed to pin pool for page(0x%llx), "
+			    "error:%d\n", right, bpt->error);
 			goto out;
 		}
 
@@ -1719,7 +1731,7 @@ uint32_t bpt_nextkey(bptree_t h, uint32_t slot)
 		slot = 0;
 	} while (true);
 
-	bpt->status = 0;
+	bpt->error = 0;
  out:
 	return 0;
 }
@@ -1814,33 +1826,59 @@ static int dbg_load_page(int fd, struct bpt_page *page,
 	return rc;
 }
 
-void dump_free_page_list(int fd, struct bpt_page *alloc,
-			 uint32_t page_size)
+void dump_bpt_page_by_pageno(struct bpt_mgr *mgr, pageno_t page_no)
 {
 	int rc = 0;
 	struct bpt_page *page;
-	pageno_t page_no;
 
-	page = bpt_malloc(page_size);
+	page = bpt_malloc(mgr->page_size);
 	if (page == NULL) {
 		printf("Failed to allocate page!\n");
 		return;
 	}
 
-	printf("-------- b+tree free page list --------\n");
+	rc = dbg_load_page(mgr->fd, page, mgr->page_size, page_no);
+	if (rc != 0) {
+		printf("Failed to load page:0x%llx, error:%d\n",
+		       page_no, rc);
+		goto out;
+	}
 
-	page_no = bpt_getpageno(alloc->right);
+	dump_bpt_page(page);
+
+ out:
+	free(page);
+	return;
+}
+
+void dump_free_page_list(struct bpt_mgr *mgr)
+{
+	int rc = 0;
+	struct bpt_page *page;
+	pageno_t page_no;
+
+	page = bpt_malloc(mgr->page_size);
+	if (page == NULL) {
+		printf("Failed to allocate page!\n");
+		return;
+	}
+
+	printf("-------- b+tree alloc page --------\n");
+	page_no = bpt_getpageno(mgr->latchmgr->alloc[0].right);
+	printf("0x%llx\n", page_no);
+
+	printf("-------- b+tree free page list --------\n");
+	page_no = bpt_getpageno(mgr->latchmgr->alloc[1].right);
 	while (page_no) {
 		printf("0x%llx->", page_no);
-		rc = dbg_load_page(fd, page, page_size, page_no);
+		rc = dbg_load_page(mgr->fd, page, mgr->page_size, page_no);
 		if (rc != 0) {
-			printf("Failed to load page 0x%llx, error:%d\n",
+			printf("Failed to load page:0x%llx, error:%d\n",
 			       page_no, rc);
 			break;
 		}
 		page_no = bpt_getpageno(page->right);
 	}
-
 	if (rc == 0) {
 		printf("nil\n");
 	}
@@ -1956,14 +1994,25 @@ int main(int argc, char *argv[])
 		printf("key %s mapped to page 0x%llx\n", key, page_no);
 	}
 
-	printf("Begin key iteration:\n");
+	ret = sprintf(key, "%08x", 500);
+	printf("Begin key iteration from:%s\n", key);
 	slot = bpt_firstkey(bpt, (unsigned char *)key, key_len);
 	if (slot == 0) {
 		fprintf(stderr, "Failed to iterate key: %s\n", key);
 		goto out;
 	}
+	i = 0;
+	while (slot != 0) {
+		slot = bpt_nextkey(bpt, slot);
+		i++;
+	}
+	fprintf(stderr, "Key iteration from %s return %d\n", key, i);
+	if (i < 11) {
+		goto out;
+	}
 	printf("done\n");
 
+	printf("Deleting all the keys...\n");
 	for (i = 511; i >= 0; i--) {
 		ret = sprintf(key, "%08x", i);
 		rc = bpt_deletekey(bpt, (unsigned char *)key, key_len, 0);
@@ -1972,6 +2021,7 @@ int main(int argc, char *argv[])
 			goto out;
 		}
 	}
+	printf("done\n");
 
  out:
 	if (mgr) {
