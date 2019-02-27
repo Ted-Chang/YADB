@@ -55,8 +55,8 @@ struct thread_info {
 	struct shm_bench_data *bench_data;
 };
 
-static void usage();
-static void print_seperator();
+static void usage(void);
+static void print_seperator(void);
 static void do_bench(bptree_t h, struct shm_bench_data *bench_data, int op);
 
 struct bench_option opts = {
@@ -618,7 +618,7 @@ int main(int argc, char *argv[])
 	return rc;
 }
 
-static void usage()
+static void usage(void)
 {
 	printf("usage: bench [-p <page-bits>] [-n <#keys>] [-o <read|write>] [-r] \\\n"
 	       "  [-c <capacity>] [-C] [-P <#processes>]\n"
@@ -628,7 +628,7 @@ static void usage()
 	dump_options(&opts);
 }
 
-static void print_seperator()
+static void print_seperator(void)
 {
 	printf("========================================\n");
 }

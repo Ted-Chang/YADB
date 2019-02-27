@@ -1904,6 +1904,7 @@ int main(int argc, char *argv[])
 	uint32_t key2_len = strlen(key2);
 	uint32_t key3_len = strlen(key3);
 	uint32_t slot;
+	struct bpt_key *k = NULL;
 	int i;
 	char key[9];
 	uint32_t key_len = sizeof(key);
@@ -2003,8 +2004,14 @@ int main(int argc, char *argv[])
 	}
 	i = 0;
 	while (slot != 0) {
-		slot = bpt_nextkey(bpt, slot);
 		i++;
+		k = keyptr(bpt->cursor, slot);
+		if (keycmp(k, (unsigned char *)key, key_len) < 0) {
+			fprintf(stderr, "Key:%s less than %s\n",
+				k->key, key);
+			goto out;
+		}
+		slot = bpt_nextkey(bpt, slot);
 	}
 	fprintf(stderr, "Key iteration from %s return %d\n", key, i);
 	if (i < 11) {
