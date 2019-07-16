@@ -1,0 +1,60 @@
+
+# dump bptree key internal helper
+define __bptree_dump_key
+    set $k = (struct bpt_key *)$arg0
+    set $i = 0
+    while ($i < $k->len)
+        set $i = $i + 1
+        printf "%c", $k->key[$i]
+    end
+    printf " "
+end
+
+# dump bptree key
+define bptree_dump_key
+    if $argc == 1
+        __bptree_dump_key $arg0
+        printf "\n"
+    else
+        print "Missing argument <key>!"
+    end
+end
+document bptree_dump_key
+Syntax: bptree_dump_key <key>
+| dump the key in character mode
+end
+
+# dump bptree page
+define __bptree_dump_page
+    set $p = (struct bpt_page *)$arg0
+    set $n = (unsigned long long)0
+    set $i = 0
+    while ($i < 6)
+        set $n = $n << 8
+        set $n = $n + $p->right[$i]
+        set $i = $i + 1
+    end
+    printf "---------- b+tree page info ----------\n"
+    printf " count  : %d\n", $p->count
+    printf " active : %d\n", $p->active
+    printf " level  : %d\n", $p->level
+    printf " min    : %d\n", $p->min
+    printf " free   : %d\n", $p->free
+    printf " kill   : %d\n", $p->kill
+    printf " dirty  : %d\n", $p->dirty
+    printf " right  : %d\n", $n
+end
+
+# dump bptree page
+define bptree_dump_page
+    if $argc == 1
+        __bptree_dump_page $arg0
+	printf "\n"
+    else
+        print "Missing argument <page>!"
+    end
+end
+document bptree_dump_page
+Syntax: bptree_dump_page <page>
+| dump the B+tree page structure
+end
