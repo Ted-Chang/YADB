@@ -13,17 +13,17 @@ struct bpt_iostat {
 };
 
 extern struct bpt_mgr *
-bpt_openmgr(const char *name, unsigned int page_bits,
+bpt_openmgr(const char *name, unsigned int node_bits,
 	    unsigned int pool_max, unsigned int hash_size);
 extern bptree_t bpt_open(struct bpt_mgr *mgr);
 extern void bpt_closemgr(struct bpt_mgr *mgr);
 extern void bpt_close(bptree_t h);
 extern int bpt_insertkey(bptree_t h, unsigned char *key,
 			 unsigned int len, bpt_level_t level,
-			 pageno_t page_no);
+			 nodeno_t node_no);
 extern int bpt_deletekey(bptree_t h, unsigned char *key,
 			 unsigned int len, bpt_level_t level);
-extern pageno_t bpt_findkey(bptree_t h, unsigned char *key,
+extern nodeno_t bpt_findkey(bptree_t h, unsigned char *key,
 			    unsigned int len);
 extern unsigned int bpt_firstkey(bptree_t h, unsigned char *key,
 				 unsigned int len);

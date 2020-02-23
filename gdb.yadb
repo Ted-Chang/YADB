@@ -24,9 +24,9 @@ Syntax: bptree_dump_key <key>
 | dump the key in character mode
 end
 
-# dump bptree page
-define __bptree_dump_page
-    set $p = (struct bpt_page *)$arg0
+# dump bptree node
+define __bptree_dump_node
+    set $p = (struct bpt_node *)$arg0
     set $n = (unsigned long long)0
     set $i = 0
     while ($i < 6)
@@ -34,7 +34,7 @@ define __bptree_dump_page
         set $n = $n + $p->right[$i]
         set $i = $i + 1
     end
-    printf "---------- b+tree page info ----------\n"
+    printf "---------- b+tree node info ----------\n"
     printf " count  : %d\n", $p->count
     printf " active : %d\n", $p->active
     printf " level  : %d\n", $p->level
@@ -45,16 +45,16 @@ define __bptree_dump_page
     printf " right  : %d\n", $n
 end
 
-# dump bptree page
-define bptree_dump_page
+# dump bptree node
+define bptree_dump_node
     if $argc == 1
-        __bptree_dump_page $arg0
+        __bptree_dump_node $arg0
 	printf "\n"
     else
-        print "Missing argument <page>!"
+        print "Missing argument <node>!"
     end
 end
-document bptree_dump_page
-Syntax: bptree_dump_page <page>
-| dump the B+tree page structure
+document bptree_dump_node
+Syntax: bptree_dump_node <node>
+| dump the B+tree node structure
 end

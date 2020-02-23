@@ -24,7 +24,7 @@ struct key_value {
 };
 
 struct bench_option {
-	unsigned int page_bits;
+	unsigned int node_bits;
 	int rounds;
 	enum {
 		BENCH_OP_READ,
@@ -60,14 +60,14 @@ static void print_seperator();
 static void do_bench(bptree_t h, struct shm_bench_data *bench_data, int op);
 
 struct bench_option opts = {
-	.page_bits = 12,	// page_bits
-	.rounds = 64*1024,	// rounds
-	.op = BENCH_OP_WRITE,	// op
-	.random = false,	// random
-	.no_cleanup = false,	// no_cleanup
-	.cache_capacity = 0,	// cache_capacity
-	.nr_threads = 1,	// nr_threads
-	.nr_processes = 1	// nr_processes
+	.node_bits = 12,
+	.rounds = 64*1024,
+	.op = BENCH_OP_WRITE,
+	.random = false,
+	.no_cleanup = false,
+	.cache_capacity = 0,
+	.nr_threads = 1,
+	.nr_processes = 1
 };
 
 /* Per process global data */
@@ -96,7 +96,7 @@ static const char *bench_op_str(int op)
 
 static void dump_options(struct bench_option *options)
 {
-	printf("Page bits           : %d\n", options->page_bits);
+	printf("Page bits           : %d\n", options->node_bits);
 	printf("Number of keys      : %d\n", options->rounds);
 	printf("Operation           : %s\n", bench_op_str(options->op));
 	printf("IO pattern          : %s\n", options->random ? "random" : "sequential");
@@ -289,13 +289,13 @@ static void do_bench(bptree_t h, struct shm_bench_data *sbd, int op)
 {
 	int rc;
 	unsigned int i;
-	pageno_t page_no;
+	nodeno_t node_no;
 	
 	while ((i = __sync_add_and_fetch(&sbd->index, 1)) < sbd->nr_kvs) {
 		if (op == BENCH_OP_READ) {
-			page_no = bpt_findkey(h, (unsigned char *)sbd->kvs[i].key,
+			node_no = bpt_findkey(h, (unsigned char *)sbd->kvs[i].key,
 					      sbd->kvs[i].len);
-			if (page_no == 0) {
+			if (node_no == 0) {
 				fprintf(stderr, "Failed to find key: %s\n",
 					sbd->kvs[i].key);
 				break;
@@ -333,7 +333,7 @@ int main(int argc, char *argv[])
 	while ((ch = getopt(argc, argv, "p:n:o:rc:t:P:Ch")) != -1) {
 		switch (ch) {
 		case 'p':
-			opts.page_bits = atoi(optarg);
+			opts.node_bits = atoi(optarg);
 			break;
 		case 'n':
 			opts.rounds = atoi(optarg);
@@ -438,7 +438,7 @@ int main(int argc, char *argv[])
 	bench_prepare_data(bench_data, opts.rounds, opts.random);
 
 	/* Create/Open b+tree */
-	mgr = bpt_openmgr("bptbench.dat", opts.page_bits, 128, 13);
+	mgr = bpt_openmgr("bptbench.dat", opts.node_bits, 128, 13);
 	if (mgr == NULL) {
 		fprintf(stderr, "Failed to open/create b+tree manager!\n");
 		goto out;
@@ -620,7 +620,7 @@ int main(int argc, char *argv[])
 
 static void usage()
 {
-	printf("usage: bench [-p <page-bits>] [-n <#keys>] [-o <read|write>] [-r] \\\n"
+	printf("usage: bench [-p <node-bits>] [-n <#keys>] [-o <read|write>] [-r] \\\n"
 	       "  [-c <capacity>] [-C] [-P <#processes>]\n"
 	       " -r        random I/O\n"
 	       " -C        do not cleanup data after test\n\n");
