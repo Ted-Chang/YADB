@@ -6,6 +6,7 @@
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <assert.h>
+#include "sysdef.h"
 #include "bptree.h"
 #include "bptdef.h"
 #include "bpt_private.h"
@@ -71,7 +72,7 @@ bpt_page(struct bptree *bpt, struct bpt_pool *pool,
 
 static void bpt_initlatch(struct bpt_latch *latch)
 {
-	bpt_bzero(latch, sizeof(*latch));
+	bzero(latch, sizeof(*latch));
 
 	rwlock_init(&latch->rdwr);
 	rwlock_init(&latch->access);
@@ -486,16 +487,16 @@ void bpt_closemgr(struct bpt_mgr *mgr)
 		close(mgr->fd);
 	}
 	if (mgr->pools) {
-		bpt_free(mgr->pools);
+		sys_free(mgr->pools);
 	}
 	if (mgr->pool_tbl) {
-		bpt_free(mgr->pool_tbl);
+		sys_free(mgr->pool_tbl);
 	}
 	if (mgr->pool_tbl_locks) {
-		bpt_free(mgr->pool_tbl_locks);
+		sys_free(mgr->pool_tbl_locks);
 	}
 
-	bpt_free(mgr);
+	sys_free(mgr);
 }
 
 /* b+tree file layout
@@ -552,14 +553,14 @@ struct bpt_mgr *bpt_openmgr(const char *name,
 		goto out;
 	}
 
-	mgr = bpt_malloc(sizeof(*mgr));
+	mgr = sys_malloc(sizeof(*mgr));
 	if (mgr == NULL) {
 		LOG(ERR, "allocate bpt_mgr failed\n");
 		rc = -1;
 		goto out;
 	}
 
-	bpt_bzero(mgr, sizeof(*mgr));
+	bzero(mgr, sizeof(*mgr));
 	mgr->fd = open(name, O_RDWR|O_CREAT, 0666);
 	if (mgr->fd == -1) {
 		LOG(ERR, "open %s failed\n", name);
@@ -578,17 +579,17 @@ struct bpt_mgr *bpt_openmgr(const char *name,
 		goto out;
 	}
 	
-	latchmgr = bpt_malloc(BPT_MAX_PAGE_SIZE);
+	latchmgr = sys_malloc(BPT_MAX_PAGE_SIZE);
 	if (latchmgr == NULL) {
 		LOG(ERR, "allocate bpt_latch_mgr failed\n");
 		rc = -1;
 		goto out;
 	}
-	bpt_bzero(latchmgr, BPT_MAX_PAGE_SIZE);
+	bzero(latchmgr, BPT_MAX_PAGE_SIZE);
 
 	/* Read minimum page size to get super block info */
 	if ((fsize = lseek(mgr->fd, 0, SEEK_END)) >= BPT_MIN_PAGE_SIZE) {
-		sb = (struct bpt_super_block *)bpt_malloc(BPT_MIN_PAGE_SIZE);
+		sb = (struct bpt_super_block *)sys_malloc(BPT_MIN_PAGE_SIZE);
 		pread(mgr->fd, sb, BPT_MIN_PAGE_SIZE, 0);
 		if (strcmp(sb->magic, BPT_MAGIC) != 0) {
 			rc = -1;
@@ -599,7 +600,7 @@ struct bpt_mgr *bpt_openmgr(const char *name,
 			page_bits = sb->page_bits;
 		}
 
-		bpt_free(sb);
+		sys_free(sb);
 		if (rc != 0) {
 			goto out;
 		}
@@ -658,7 +659,7 @@ struct bpt_mgr *bpt_openmgr(const char *name,
 		goto out;
 	}
 
-	bpt_bzero(latchmgr, mgr->page_size);
+	bzero(latchmgr, mgr->page_size);
 	latchmgr->nr_latch_pages = nr_latch_pages;
 	latchmgr->nr_latch_total = (unsigned short)
 		(nr_latch_pages * latch_per_page);
@@ -713,7 +714,7 @@ struct bpt_mgr *bpt_openmgr(const char *name,
 	}
 
 	/* Zero pages for latches */
-	bpt_bzero(latchmgr, mgr->page_size);
+	bzero(latchmgr, mgr->page_size);
 	last = MIN_LEVEL + PAGE_ROOT;
 	while (last <= ((MIN_LEVEL + PAGE_ROOT + nr_latch_pages) | mgr->pool_mask)) {
 		pwrite(mgr->fd, latchmgr, mgr->page_size, last << mgr->page_bits);
@@ -744,7 +745,7 @@ struct bpt_mgr *bpt_openmgr(const char *name,
  out:
 
 	if (latchmgr) {
-		bpt_free(latchmgr);
+		sys_free(latchmgr);
 	}
 	if (rc != 0) {
 		if (mgr) {
@@ -765,23 +766,23 @@ bptree_t bpt_open(struct bpt_mgr *mgr)
 		goto out;
 	}
 
-	bpt = bpt_malloc(sizeof(*bpt));
+	bpt = sys_malloc(sizeof(*bpt));
 	if (bpt == NULL) {
 		rc = -1;
 		goto out;
 	}
 
-	bpt_bzero(bpt, sizeof(*bpt));
+	bzero(bpt, sizeof(*bpt));
 	bpt->mgr = mgr;
 
 	/* Total 3 in-memory page buffer */
-	bpt->mem = bpt_malloc(BPT_BUF_PAGES * mgr->page_size);
+	bpt->mem = sys_malloc(BPT_BUF_PAGES * mgr->page_size);
 	if (bpt->mem == NULL) {
 		rc = -1;
 		goto out;
 	}
 
-	bpt_bzero(bpt->mem, BPT_BUF_PAGES * mgr->page_size);
+	bzero(bpt->mem, BPT_BUF_PAGES * mgr->page_size);
 	bpt->frame = (struct bpt_page *)(bpt->mem);
 	bpt->cursor = (struct bpt_page *)(bpt->mem + mgr->page_size);
 	bpt->zero = (struct bpt_page *)(bpt->mem + 2 * mgr->page_size);
@@ -801,9 +802,9 @@ void bpt_close(bptree_t h)
 
 	bpt = (struct bptree *)h;
 	if (bpt->mem) {
-		bpt_free(bpt->mem);
+		sys_free(bpt->mem);
 	}
-	bpt_free(bpt);
+	sys_free(bpt);
 }
 
 pageno_t bpt_newpage(struct bptree *bpt, struct bpt_page *page)
@@ -1083,7 +1084,7 @@ unsigned int bpt_cleanpage(struct bptree *bpt,
 	}
 
 	memcpy(bpt->frame, page, bpt->mgr->page_size);
-	bpt_bzero(page+1, bpt->mgr->page_size - sizeof(*page));
+	bzero(page+1, bpt->mgr->page_size - sizeof(*page));
 	page->dirty = 0;
 	page->active = 0;
 	next = bpt->mgr->page_size;
@@ -1137,7 +1138,7 @@ int bpt_splitroot(struct bptree *bpt, struct bpt_page_set *root,
 		goto out;
 	}
 
-	bpt_bzero(root->page + 1, bpt->mgr->page_size - sizeof(*root->page));
+	bzero(root->page + 1, bpt->mgr->page_size - sizeof(*root->page));
 
 	/* Insert first key on new root page and link old root
 	 * page as left child
@@ -1189,7 +1190,7 @@ int bpt_splitpage(struct bptree *bpt, struct bpt_page_set *set)
 	level = set->page->level;
 
 	/* Split higher half of keys to bpt->frame */
-	bpt_bzero(bpt->frame, mgr->page_size);
+	bzero(bpt->frame, mgr->page_size);
 	max = set->page->count;
 
 	count = 0;
@@ -1230,7 +1231,7 @@ int bpt_splitpage(struct bptree *bpt, struct bpt_page_set *set)
 
 	/* Update lower half in old page */
 	memcpy(bpt->frame, set->page, mgr->page_size);
-	bpt_bzero(set->page + 1, mgr->page_size - sizeof(*set->page));
+	bzero(set->page + 1, mgr->page_size - sizeof(*set->page));
 	set->page->dirty = 0;
 	set->page->active = 0;
 
@@ -1420,7 +1421,7 @@ int bpt_fixfence(struct bptree *bpt,
 	ptr = keyptr(set->page, set->page->count);
 	memcpy(rightkey, ptr, ptr->len + 1);
 
-	bpt_bzero(slotptr(set->page, set->page->count), sizeof(struct bpt_slot));
+	bzero(slotptr(set->page, set->page->count), sizeof(struct bpt_slot));
 	set->page->count--;
 	set->page->dirty = 1;
 
@@ -1529,8 +1530,8 @@ int bpt_deletekey(bptree_t h, unsigned char *key,
 				if (slotptr(set.page, i)->dead) {
 					*slotptr(set.page, i) =
 						*slotptr(set.page, i+1);
-					bpt_bzero(slotptr(set.page, set.page->count),
-						  sizeof(struct bpt_slot));
+					bzero(slotptr(set.page, set.page->count),
+					      sizeof(struct bpt_slot));
 					set.page->count--;
 				} else {
 					break;
@@ -1822,7 +1823,7 @@ void dump_free_page_list(int fd, struct bpt_page *alloc,
 	struct bpt_page *page;
 	pageno_t page_no;
 
-	page = bpt_malloc(page_size);
+	page = sys_malloc(page_size);
 	if (page == NULL) {
 		printf("Failed to allocate page!\n");
 		return;

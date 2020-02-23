@@ -2,8 +2,8 @@
 #include <stdbool.h>
 #include <string.h>
 #include <assert.h>
+#include "sysdef.h"
 #include "lock.h"
-#include "bptdef.h"
 #include "bptree.h"
 
 static pthread_rwlockattr_t rwattr;

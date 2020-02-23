@@ -14,8 +14,8 @@
 #include <semaphore.h>
 #include <signal.h>
 #include <assert.h>
+#include "sysdef.h"
 #include "bptree.h"
-#include "bptdef.h"
 
 struct key_value {
 	unsigned char len;
